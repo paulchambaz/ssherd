@@ -1,0 +1,19 @@
+root = "."
+tmp_dir = "target/cache"
+
+[build]
+cmd = "templ generate && go build -o target/cache/ssherd ."
+full_bin = "./target/cache/ssherd -c ssherd.cfg"
+include_ext = ["go", "templ"]
+exclude_dir = ["target"]
+exclude_regex = ["_templ\\.go$"]
+delay = 100
+stop_on_error = true
+send_interrupt = true
+
+[log]
+time = false
+main_only = true
+
+[screen]
+clear_on_rebuild = true

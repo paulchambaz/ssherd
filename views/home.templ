@@ -1,0 +1,13 @@
+package views
+
+import "github.com/paulchambaz/ssherd/internal"
+
+templ Home(projects []*internal.Project) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		@Projects(projects)
+	}
+}

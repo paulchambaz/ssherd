@@ -1,0 +1,136 @@
+package views
+
+import "github.com/paulchambaz/ssherd/internal"
+
+templ Projects(projects []*internal.Project) {
+	<main class="flex-1 p-8 max-w-5xl mx-auto w-full mt-8">
+		<div class="flex items-center justify-between mb-4">
+			<h2 class="text-xl font-semibold">Projects</h2>
+			<a href="/projects/new" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				New project
+			</a>
+		</div>
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			if len(projects) == 0 {
+				<div class="px-6 py-12 text-center text-base-500 text-sm">
+					No projects yet. Create your first project to get started.
+				</div>
+			} else {
+				for i, p := range projects {
+					<div class={ "flex items-center justify-between px-4 py-4 hover:bg-base-200", templ.KV("border-t border-base-300", i > 0) }>
+						<div class="flex flex-col gap-1 min-w-0">
+							<a href={ templ.SafeURL("/projects/" + p.Slug) } class="font-semibold text-accent-500 hover:underline">
+								{ p.Name }
+							</a>
+							<p class="text-xs text-base-500 font-mono">
+								{ p.GitRepo }
+								<span class="mx-1.5 text-base-400"> - </span>
+								{ p.RemotePath }
+							</p>
+						</div>
+					</div>
+				}
+			}
+		</div>
+	</main>
+}
+
+templ projectForm(action string, p *internal.Project, submitLabel string) {
+	<form method="POST" action={ templ.SafeURL(action) } class="flex flex-col gap-4">
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+				<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Name</label>
+				<input
+					type="text"
+					name="name"
+					value={ p.Name }
+					required
+					class="bg-transparent text-sm focus:outline-none placeholder:text-base-400"
+					placeholder="My project"
+				/>
+			</div>
+			<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+				<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Remote path</label>
+				<input
+					type="text"
+					name="remote_path"
+					value={ p.RemotePath }
+					required
+					class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+					placeholder="/users/nfs/Vrac/paulchambaz/myproject"
+				/>
+			</div>
+			<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+				<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Git repository</label>
+				<input
+					type="text"
+					name="git_repo"
+					value={ p.GitRepo }
+					required
+					class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+					placeholder="https://github.com/user/repo"
+				/>
+			</div>
+			<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+				<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Branch</label>
+				<input
+					type="text"
+					name="branch"
+					value={ p.Branch }
+					class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+					placeholder="master"
+				/>
+			</div>
+			<div class="flex flex-col gap-1.5 px-4 py-3">
+				<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Git token</label>
+				<input
+					type="password"
+					name="git_token"
+					value={ p.GitToken }
+					class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+					placeholder="ghp_xxxxxxxxxxxx"
+				/>
+			</div>
+		</div>
+		<div class="flex gap-2 justify-end">
+			<a href="/" class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
+				Cancel
+			</a>
+			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				{ submitLabel }
+			</button>
+		</div>
+	</form>
+}
+
+templ NewProject() {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<main class="flex-1 p-8 max-w-2xl mx-auto w-full mt-8">
+			<h2 class="text-xl font-semibold mb-1">Create a new project</h2>
+			<p class="text-sm text-base-500 mb-6 pb-6 border-b border-base-300">
+				A project links a remote NFS directory to a git repository.
+			</p>
+			@projectForm("/projects", &internal.Project{Branch: "master"}, "Create project")
+		</main>
+	}
+}
+
+templ EditProject(p *internal.Project) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<main class="flex-1 p-8 max-w-2xl mx-auto w-full mt-8">
+			<h2 class="text-xl font-semibold mb-1">Edit { p.Name }</h2>
+			<p class="text-sm text-base-500 mb-6 pb-6 border-b border-base-300">
+				A project links a remote NFS directory to a git repository.
+			</p>
+			@projectForm("/projects/"+p.Slug, p, "Save changes")
+		</main>
+	}
+}

@@ -1,0 +1,15 @@
+package views
+
+templ Header() {
+	<header class="flex justify-between items-center max-w-[100rem] mx-auto w-full px-8 py-4">
+		<div class="">
+			<a href="/" class="font-bold">
+				<span class="text-2xl">SSHERD</span>
+			</a>
+		</div>
+		<nav class="whitespace-nowrap flex h-full items-center gap-4 [&>*]:h-full [&>*]:select-none [&>*]:flex [&>*]:justify-center [&>*]:items-center [&>*:hover]:text-accent-400">
+			{ children... }
+			<button onclick="toggleTheme()"><span class="icon-theme !size-5"></span></button>
+		</nav>
+	</header>
+}
