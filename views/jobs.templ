@@ -1,0 +1,444 @@
+package views
+
+import (
+	"fmt"
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+templ NewBatchPage(p *internal.Project) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+			<div class="mb-6">
+				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
+					<a href="/" class="hover:text-base-700">Projects</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug) } class="hover:text-base-700">{ p.Name }</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="hover:text-base-700">Jobs</a>
+					<span>/</span>
+					<span class="text-base-700">New batch</span>
+				</div>
+				<h1 class="text-2xl font-bold">New batch</h1>
+				<p class="text-sm text-base-500 mt-0.5">Generate jobs from a command template with ablation axes.</p>
+			</div>
+		</div>
+		<div class="max-w-5xl mx-auto w-full px-8 mt-2 pb-12">
+			@newBatchForm(p)
+		</div>
+	}
+}
+
+templ newBatchForm(p *internal.Project) {
+	<form id="batch-form" method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="space-y-8">
+		<input type="hidden" id="axes_json" name="axes_json" value="[]"/>
+		<!-- Infrastructure -->
+		<div>
+			<h3 class="text-sm font-semibold uppercase tracking-wide text-base-500 mb-3">Infrastructure</h3>
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+					<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Display name prefix</label>
+					<input
+						type="text"
+						name="name_prefix"
+						required
+						class="bg-transparent text-sm focus:outline-none placeholder:text-base-400"
+						placeholder="RLPD ablation"
+					/>
+				</div>
+				<div class="flex border-b border-base-300">
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Log path <span class="normal-case font-normal text-base-400">(relative to project)</span>
+						</label>
+						<input
+							type="text"
+							name="log_path"
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="results/{env}/seed_{seed}/train.log"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Output path <span class="normal-case font-normal text-base-400">(relative to project)</span>
+						</label>
+						<input
+							type="text"
+							name="output_path"
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="results/{env}/seed_{seed}/"
+						/>
+					</div>
+				</div>
+				<div class="flex border-b border-base-300">
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Log parser script <span class="normal-case font-normal text-base-400">(relative)</span>
+						</label>
+						<input
+							type="text"
+							name="log_parser_script"
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="scripts/parse_logs.py"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Viz script <span class="normal-case font-normal text-base-400">(relative)</span>
+						</label>
+						<input
+							type="text"
+							name="viz_script"
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="scripts/plot_results.py"
+						/>
+					</div>
+				</div>
+				<div class="flex">
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Min VRAM (MB)</label>
+						<input
+							type="number"
+							name="min_vram"
+							value="2048"
+							min="0"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Preferred GPU</label>
+						<select name="preferred_gpu" class="bg-transparent text-sm focus:outline-none">
+							<option value="">Any</option>
+							<option value="RTX 4050">RTX 4050</option>
+							<option value="RTX 3080">RTX 3080</option>
+							<option value="RTX 2080">RTX 2080</option>
+						</select>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 w-32">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Max retries</label>
+						<input
+							type="number"
+							name="max_retries"
+							value="3"
+							min="0"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- Ablation template -->
+		<div>
+			<h3 class="text-sm font-semibold uppercase tracking-wide text-base-500 mb-3">Ablation template</h3>
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+					<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Base command</label>
+					<textarea
+						id="base_command"
+						name="base_command"
+						rows="2"
+						required
+						class="bg-transparent text-sm font-mono focus:outline-none resize-y placeholder:text-base-400"
+						placeholder="uv run python train.py --algo rlpd --gamma 0.99"
+					></textarea>
+				</div>
+				<div class="px-4 py-3 border-b border-base-300">
+					<div class="flex items-center justify-between mb-3">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Ablation axes</label>
+						<button
+							type="button"
+							onclick="addAxis()"
+							class="text-xs px-3 py-1.5 border border-base-300 rounded hover:bg-base-100 font-medium"
+						>+ Add axis</button>
+					</div>
+					<div id="axes_container" class="space-y-3">
+						<p class="text-sm text-base-400 py-2">No axes yet — jobs will be created from the base command alone.</p>
+					</div>
+				</div>
+				<div class="flex border-b border-base-300">
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Seed flag</label>
+						<input
+							type="text"
+							id="seed_flag"
+							name="seed_flag"
+							value="--seed"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 w-32 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Num seeds</label>
+						<input
+							type="number"
+							id="num_seeds"
+							name="num_seeds"
+							value="3"
+							min="1"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Retry suffix</label>
+						<input
+							type="text"
+							name="retry_suffix"
+							value="--resume"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- Preview -->
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			<div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-50">
+				<span class="text-sm font-semibold">Preview</span>
+				<span id="preview_count" class="text-sm font-mono text-base-500">3 jobs</span>
+			</div>
+			<div id="preview_commands" class="px-4 py-3 space-y-1.5 font-mono text-xs text-base-600 leading-relaxed"></div>
+		</div>
+		<div class="flex justify-end gap-2">
+			<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
+				Cancel
+			</a>
+			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				Create batch
+			</button>
+		</div>
+	</form>
+	<script>
+	(function () {
+	  let nextIdx = 0;
+
+	  function esc(s) {
+	    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+	  }
+
+	  function getAxes() {
+	    const axes = [];
+	    document.querySelectorAll('.axis-block').forEach(function(block) {
+	      const idx = block.dataset.idx;
+	      const name = (document.getElementById('axis_' + idx + '_name') || {}).value || '';
+	      const raw = (document.getElementById('axis_' + idx + '_values') || {}).value || '';
+	      const values = raw.split('\n').map(v => v.trim()).filter(v => v);
+	      if (values.length > 0) axes.push({ name: name.trim(), values: values });
+	    });
+	    return axes;
+	  }
+
+	  function cartesian(axes) {
+	    if (axes.length === 0) return [[]];
+	    const [first, ...rest] = axes;
+	    const sub = cartesian(rest);
+	    return first.values.flatMap(v => sub.map(r => [v, ...r]));
+	  }
+
+	  function updatePreview() {
+	    const base = (document.getElementById('base_command') || {}).value || '';
+	    const seedFlag = (document.getElementById('seed_flag') || {}).value || '--seed';
+	    const numSeeds = parseInt((document.getElementById('num_seeds') || {}).value) || 1;
+	    const axes = getAxes();
+	    const combos = cartesian(axes);
+	    const total = combos.length * numSeeds;
+
+	    const countEl = document.getElementById('preview_count');
+	    if (countEl) countEl.textContent = total + ' job' + (total !== 1 ? 's' : '');
+
+	    const lines = [];
+	    outer: for (const combo of combos) {
+	      for (let s = 1; s <= numSeeds; s++) {
+	        if (lines.length >= 3) break outer;
+	        const cmd = [base, ...combo, seedFlag, s].filter(p => p !== '').join(' ');
+	        lines.push('<div class="truncate">' + esc(cmd) + '</div>');
+	      }
+	    }
+	    if (total > 3) lines.push('<div class="text-base-400">… and ' + (total - 3) + ' more</div>');
+
+	    const el = document.getElementById('preview_commands');
+	    if (el) el.innerHTML = lines.join('') || '<div class="text-base-400">Enter a base command to preview.</div>';
+
+	    // serialize axes for form submission
+	    const hidden = document.getElementById('axes_json');
+	    if (hidden) hidden.value = JSON.stringify(getAxes());
+	  }
+
+	  window.addAxis = function () {
+	    const container = document.getElementById('axes_container');
+	    // remove placeholder text if present
+	    const placeholder = container.querySelector('p');
+	    if (placeholder) placeholder.remove();
+
+	    const idx = nextIdx++;
+	    const div = document.createElement('div');
+	    div.className = 'axis-block border border-base-300 rounded-md overflow-hidden';
+	    div.dataset.idx = idx;
+	    div.innerHTML =
+	      '<div class="flex items-center gap-2 px-3 py-2 bg-base-50 border-b border-base-300">' +
+	        '<input id="axis_' + idx + '_name" type="text" placeholder="Axis name (e.g. env)" ' +
+	          'class="bg-transparent text-sm font-semibold focus:outline-none flex-1 placeholder:font-normal placeholder:text-base-400" />' +
+	        '<button type="button" onclick="removeAxis(this)" class="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>' +
+	      '</div>' +
+	      '<textarea id="axis_' + idx + '_values" rows="3" ' +
+	        'placeholder="--env antmaze-large-play-v2\n--env antmaze-large-diverse-v2" ' +
+	        'class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>';
+
+	    div.querySelector('input').addEventListener('input', updatePreview);
+	    div.querySelector('textarea').addEventListener('input', updatePreview);
+	    container.appendChild(div);
+	    updatePreview();
+	  };
+
+	  window.removeAxis = function (btn) {
+	    btn.closest('.axis-block').remove();
+	    const container = document.getElementById('axes_container');
+	    if (container.querySelectorAll('.axis-block').length === 0) {
+	      const p = document.createElement('p');
+	      p.className = 'text-sm text-base-400 py-2';
+	      p.textContent = 'No axes yet — jobs will be created from the base command alone.';
+	      container.appendChild(p);
+	    }
+	    updatePreview();
+	  };
+
+	  ['base_command', 'seed_flag', 'num_seeds'].forEach(function(id) {
+	    const el = document.getElementById(id);
+	    if (el) el.addEventListener('input', updatePreview);
+	  });
+
+	  // keep axes_json in sync before submit (belt and suspenders)
+	  document.getElementById('batch-form').addEventListener('submit', function() {
+	    document.getElementById('axes_json').value = JSON.stringify(getAxes());
+	  });
+
+	  updatePreview();
+	})();
+	</script>
+}
+
+templ JobDetailPage(p *internal.Project, job *internal.Job) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+			<div class="mb-6">
+				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
+					<a href="/" class="hover:text-base-700">Projects</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug) } class="hover:text-base-700">{ p.Name }</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="hover:text-base-700">Jobs</a>
+					<span>/</span>
+					<span class="text-base-700 truncate max-w-[300px]">{ job.DisplayName }</span>
+				</div>
+				<div class="flex items-center gap-3">
+					<h1 class="text-2xl font-bold">{ job.DisplayName }</h1>
+					<span class={ "text-xs px-2.5 py-1 rounded-full font-semibold", job.Status.BadgeClass() }>
+						{ job.Status.Label() }
+					</span>
+				</div>
+			</div>
+		</div>
+		<div class="max-w-5xl mx-auto w-full px-8 pb-12 space-y-6">
+			<!-- Info grid -->
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="grid grid-cols-2 divide-x divide-base-300">
+					<div class="grid grid-cols-2 divide-y divide-base-300">
+						@infoCell("Machine", func() string {
+							if job.Machine != "" { return job.Machine }
+							return "—"
+						}(), true)
+						@infoCell("Retries", fmt.Sprintf("%d / %d", job.RetryCount, job.MaxRetries), true)
+						@infoCell("Started", func() string {
+							if job.StartedAt != nil { return job.StartedAt.Format("Jan 02, 15:04:05") }
+							return "—"
+						}(), false)
+						@infoCell("Finished", func() string {
+							if job.FinishedAt != nil { return job.FinishedAt.Format("Jan 02, 15:04:05") }
+							return "—"
+						}(), false)
+					</div>
+					<div class="flex flex-col divide-y divide-base-300">
+						<div class="flex flex-col gap-1 px-4 py-3">
+							<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Run command</span>
+							<code class="text-xs font-mono text-base-600 break-all leading-relaxed">{ job.RunCommand }</code>
+						</div>
+						if job.RetryCommand != job.RunCommand {
+							<div class="flex flex-col gap-1 px-4 py-3">
+								<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Retry command</span>
+								<code class="text-xs font-mono text-base-600 break-all leading-relaxed">{ job.RetryCommand }</code>
+							</div>
+						}
+					</div>
+				</div>
+			</div>
+			<!-- Progress -->
+			if job.Progress != nil {
+				<div class="border border-base-300 rounded-md px-4 py-4">
+					<div class="flex items-center justify-between mb-2">
+						<span class="text-sm font-semibold">Progress</span>
+						<span class="text-sm text-base-500">{ job.Progress.Label }</span>
+					</div>
+					<div class="w-full bg-base-200 rounded-full h-2">
+						<div
+							class="bg-accent-500 h-2 rounded-full transition-all"
+							style={ fmt.Sprintf("width: %.2f%%", job.Progress.Percent) }
+						></div>
+					</div>
+					<div class="flex justify-between mt-1.5 text-xs text-base-400">
+						<span>{ fmt.Sprintf("Step %d", job.Progress.CurrentStep) }</span>
+						<span>{ fmt.Sprintf("%.1f%%", job.Progress.Percent) }</span>
+						<span>{ fmt.Sprintf("/ %d", job.Progress.TotalSteps) }</span>
+					</div>
+				</div>
+			}
+			<!-- Console -->
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-50">
+					<span class="text-sm font-semibold">Console</span>
+					<span class="text-xs text-base-400">stdout</span>
+				</div>
+				<div class="bg-base-950 text-base-100 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto" id="console-output">
+					if job.Status == internal.JobPending {
+						<span class="text-base-500">Waiting for scheduler to dispatch this job…</span>
+					} else {
+						<span class="text-base-500">Live log streaming will be available once the scheduler is connected.</span>
+					}
+				</div>
+			</div>
+			<!-- Actions -->
+			<div class="flex items-center gap-3">
+				if job.Status == internal.JobRunning || job.Status == internal.JobPending {
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + job.ID + "/cancel") }>
+						<button
+							type="submit"
+							class="px-4 py-2 text-sm font-medium text-red-500 border border-red-400 rounded-md hover:bg-red-50"
+							onclick="return confirm('Cancel this job?')"
+						>Cancel job</button>
+					</form>
+				}
+				if job.Status == internal.JobFailed || job.Status == internal.JobStalled || job.Status == internal.JobCancelled {
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + job.ID + "/retry") }>
+						<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+							Retry job
+						</button>
+					</form>
+				}
+				<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="px-4 py-2 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100">
+					← Back to jobs
+				</a>
+			</div>
+		</div>
+	}
+}
+
+templ infoCell(label, value string, borderBottom bool) {
+	<div class={ "flex flex-col gap-1 px-4 py-3", templ.KV("border-b border-base-300", borderBottom) }>
+		<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">{ label }</span>
+		<span class="text-sm font-mono">{ value }</span>
+	</div>
+}

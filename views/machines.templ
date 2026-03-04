@@ -11,8 +11,7 @@ templ Machines(store *internal.MachinesStore) {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
 		}
-		<main class="flex-1 p-8 max-w-5xl mx-auto w-full mt-8 space-y-8">
-			<!-- Proxies -->
+		<main class="flex-1 p-8 max-w-5xl mx-auto w-full mt-4 space-y-8">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-xl font-semibold">Proxies</h2>
 				<a href="/proxies/new" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
@@ -34,11 +33,6 @@ templ Machines(store *internal.MachinesStore) {
 								</span>
 							</div>
 							<div class="flex items-center gap-3 shrink-0">
-								if p.Password != "" {
-									<span class="text-xs text-base-400">password set</span>
-								} else {
-									<span class="text-xs text-base-400">no password</span>
-								}
 								<form method="POST" action={ templ.SafeURL("/proxies/" + p.ID + "/delete") }>
 									<button type="submit" class="text-xs text-red-500 hover:text-red-700 hover:underline">
 										Delete
@@ -49,14 +43,13 @@ templ Machines(store *internal.MachinesStore) {
 					}
 				}
 			</div>
-			<!-- Machines -->
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-xl font-semibold">
 					Machines
 					<span class="text-base font-normal text-base-500 ml-1">({ fmt.Sprintf("%d", len(store.Machines)) })</span>
 				</h2>
 				<a href="/machines/new" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
-					Add machines
+					New machine
 				</a>
 			</div>
 			<div class="border border-base-300 rounded-md overflow-hidden">
@@ -66,7 +59,7 @@ templ Machines(store *internal.MachinesStore) {
 					</div>
 				} else {
 					for i, m := range store.Machines {
-						<div class={ "flex items-center justify-between px-4 py-3 hover:bg-base-200", templ.KV("border-t border-base-300", i > 0) }>
+						<div class={ "flex items-center justify-between px-4 py-3", templ.KV("border-t border-base-300", i > 0) }>
 							<div class="flex flex-col gap-0.5 min-w-0">
 								<span class="font-semibold text-sm font-mono">{ m.Name }</span>
 								<span class="text-xs text-base-500 font-mono">{ m.User }{ "@" }{ m.Hostname }</span>

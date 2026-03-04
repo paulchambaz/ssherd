@@ -1,0 +1,447 @@
+package views
+
+import (
+	"fmt"
+
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+templ NewVisualizationPage(p *internal.Project) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+			<div class="mb-6">
+				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
+					<a href="/" class="hover:text-base-700">Projects</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug) } class="hover:text-base-700">{ p.Name }</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="hover:text-base-700">Visualizations</a>
+					<span>/</span>
+					<span class="text-base-700">New</span>
+				</div>
+				<h1 class="text-2xl font-bold">New visualization</h1>
+				<p class="text-sm text-base-500 mt-0.5">Configure a script with toggleable axes. One SVG will be pre-generated per combination.</p>
+			</div>
+		</div>
+		<div class="max-w-5xl mx-auto w-full px-8 mt-2 pb-12">
+			@newVizForm(p)
+		</div>
+	}
+}
+
+templ newVizForm(p *internal.Project) {
+	<form id="viz-form" method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="space-y-8">
+		<input type="hidden" id="axes_json" name="axes_json" value="[]"/>
+		<!-- Infra -->
+		<div>
+			<h3 class="text-sm font-semibold uppercase tracking-wide text-base-500 mb-3">Configuration</h3>
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+					<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Name</label>
+					<input
+						type="text"
+						name="name"
+						required
+						class="bg-transparent text-sm focus:outline-none placeholder:text-base-400"
+						placeholder="RLPD ablation results"
+					/>
+				</div>
+				<div class="flex border-b border-base-300">
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Viz script <span class="normal-case font-normal text-base-400">(relative to project)</span>
+						</label>
+						<input
+							type="text"
+							name="viz_script"
+							required
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="scripts/plot_results.py"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Data path <span class="normal-case font-normal text-base-400">(relative to project)</span>
+						</label>
+						<input
+							type="text"
+							name="data_path"
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="results/"
+						/>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- Axes -->
+		<div>
+			<h3 class="text-sm font-semibold uppercase tracking-wide text-base-500 mb-3">Axes</h3>
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="px-4 py-3">
+					<div class="flex items-center justify-between mb-3">
+						<p class="text-sm text-base-500">
+							Each axis maps to a CLI flag. Toggleable axes generate multiple SVGs; fixed axes are always passed as-is.
+						</p>
+						<button
+							type="button"
+							onclick="addVizAxis()"
+							class="text-xs px-3 py-1.5 border border-base-300 rounded hover:bg-base-100 font-medium shrink-0 ml-4"
+						>+ Add axis</button>
+					</div>
+					<div id="viz_axes_container" class="space-y-3">
+						<p id="viz_axes_empty" class="text-sm text-base-400 py-2">No axes yet — the script will be called with no extra flags.</p>
+					</div>
+				</div>
+			</div>
+		</div>
+		<!-- Preview -->
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			<div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-50">
+				<span class="text-sm font-semibold">Preview</span>
+				<span id="viz_preview_count" class="text-sm font-mono text-base-500">1 SVG to generate</span>
+			</div>
+			<div id="viz_preview_commands" class="px-4 py-3 space-y-1.5 font-mono text-xs text-base-600 leading-relaxed"></div>
+		</div>
+		<div class="flex justify-end gap-2">
+			<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
+				Cancel
+			</a>
+			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				Save visualization
+			</button>
+		</div>
+	</form>
+	<script>
+	(function () {
+	  let nextIdx = 0;
+
+	  function esc(s) {
+	    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+	  }
+
+	  function getAxes() {
+	    const axes = [];
+	    document.querySelectorAll('.viz-axis-block').forEach(function (block) {
+	      const idx = block.dataset.idx;
+	      const name     = (document.getElementById('vax_' + idx + '_name')       || {}).value || '';
+	      const flag     = (document.getElementById('vax_' + idx + '_flag')       || {}).value || '';
+	      const raw      = (document.getElementById('vax_' + idx + '_values')     || {}).value || '';
+	      const toggle   = (document.getElementById('vax_' + idx + '_toggleable') || {}).checked;
+	      const values   = raw.split('\n').map(v => v.trim()).filter(v => v);
+	      if (values.length > 0) {
+	        axes.push({ name: name.trim(), flag: flag.trim(), values, toggleable: toggle });
+	      }
+	    });
+	    return axes;
+	  }
+
+	  function svgCount(axes) {
+	    const toggleable = axes.filter(a => a.toggleable);
+	    if (toggleable.length === 0) return 1;
+	    return toggleable.reduce((acc, a) => acc * Math.max(1, a.values.length), 1);
+	  }
+
+	  function cartesian(axes) {
+	    if (axes.length === 0) return [[]];
+	    const [first, ...rest] = axes;
+	    const sub = cartesian(rest);
+	    return first.values.flatMap(v => sub.map(r => [v, ...r]));
+	  }
+
+	  function updatePreview() {
+	    const axes = getAxes();
+	    const count = svgCount(axes);
+	    const countEl = document.getElementById('viz_preview_count');
+	    if (countEl) countEl.textContent = count + ' SVG' + (count !== 1 ? 's' : '') + ' to generate';
+
+	    const fixedArgs = axes.filter(a => !a.toggleable).map(a => a.flag + ' <val>').join(' ');
+	    const toggleable = axes.filter(a => a.toggleable);
+	    const combos = cartesian(toggleable);
+
+	    const lines = [];
+	    for (let i = 0; i < Math.min(3, combos.length || 1); i++) {
+	      const combo = combos[i] || [];
+	      const toggleArgs = toggleable.map((a, j) => a.flag + ' ' + (combo[j] || '')).join(' ');
+	      const cmd = ['uv run <viz_script>', '--data-path <data_path>', fixedArgs, toggleArgs, '--output <key>.svg']
+	        .filter(p => p.trim()).join(' ');
+	      lines.push('<div class="truncate">' + esc(cmd) + '</div>');
+	    }
+	    if (count > 3) lines.push('<div class="text-base-400">… and ' + (count - 3) + ' more</div>');
+	    const el = document.getElementById('viz_preview_commands');
+	    if (el) el.innerHTML = lines.join('') || '<div class="text-base-400">Add axes to preview generated calls.</div>';
+
+	    const hidden = document.getElementById('axes_json');
+	    if (hidden) hidden.value = JSON.stringify(getAxes());
+	  }
+
+	  window.addVizAxis = function () {
+	    const container = document.getElementById('viz_axes_container');
+	    const empty = document.getElementById('viz_axes_empty');
+	    if (empty) empty.remove();
+
+	    const idx = nextIdx++;
+	    const div = document.createElement('div');
+	    div.className = 'viz-axis-block border border-base-300 rounded-md overflow-hidden';
+	    div.dataset.idx = idx;
+	    div.innerHTML =
+	      '<div class="flex items-center gap-3 px-3 py-2 bg-base-50 border-b border-base-300">' +
+	        '<input id="vax_' + idx + '_name" type="text" placeholder="Axis name (e.g. algo)" ' +
+	          'class="bg-transparent text-sm font-semibold focus:outline-none flex-1 placeholder:font-normal placeholder:text-base-400" />' +
+	        '<input id="vax_' + idx + '_flag" type="text" placeholder="CLI flag (e.g. --algo)" ' +
+	          'class="bg-transparent text-sm font-mono focus:outline-none w-44 placeholder:text-base-400" />' +
+	        '<label class="flex items-center gap-1.5 text-xs text-base-500 shrink-0 cursor-pointer select-none">' +
+	          '<input id="vax_' + idx + '_toggleable" type="checkbox" checked class="accent-accent-500" /> Toggleable' +
+	        '</label>' +
+	        '<button type="button" onclick="removeVizAxis(this)" class="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>' +
+	      '</div>' +
+	      '<textarea id="vax_' + idx + '_values" rows="3" ' +
+	        'placeholder="rlpd\nsac\ntd3" ' +
+	        'class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>';
+
+	    div.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', updatePreview));
+	    container.appendChild(div);
+	    updatePreview();
+	  };
+
+	  window.removeVizAxis = function (btn) {
+	    btn.closest('.viz-axis-block').remove();
+	    const container = document.getElementById('viz_axes_container');
+	    if (container.querySelectorAll('.viz-axis-block').length === 0) {
+	      const p = document.createElement('p');
+	      p.id = 'viz_axes_empty';
+	      p.className = 'text-sm text-base-400 py-2';
+	      p.textContent = 'No axes yet — the script will be called with no extra flags.';
+	      container.appendChild(p);
+	    }
+	    updatePreview();
+	  };
+
+	  document.getElementById('viz-form').addEventListener('submit', function () {
+	    document.getElementById('axes_json').value = JSON.stringify(getAxes());
+	  });
+
+	  updatePreview();
+	})();
+	</script>
+}
+
+templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+			<div class="mb-6">
+				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
+					<a href="/" class="hover:text-base-700">Projects</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug) } class="hover:text-base-700">{ p.Name }</a>
+					<span>/</span>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="hover:text-base-700">Visualizations</a>
+					<span>/</span>
+					<span class="text-base-700">{ viz.Name }</span>
+				</div>
+				<div class="flex items-center justify-between">
+					<h1 class="text-2xl font-bold">{ viz.Name }</h1>
+					<div class="flex items-center gap-2">
+						<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID + "/generate") }>
+							<button type="submit" class="px-3 py-1.5 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100">
+								↻ Generate
+							</button>
+						</form>
+						<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID + "/delete") } onsubmit="return confirm('Delete this visualization?')">
+							<button type="submit" class="px-3 py-1.5 text-sm font-medium text-red-500 border border-red-300 rounded-md hover:bg-red-50">
+								Delete
+							</button>
+						</form>
+					</div>
+				</div>
+				<p class="text-xs text-base-400 font-mono mt-1">{ viz.VizScript }</p>
+			</div>
+		</div>
+		<div class="max-w-5xl mx-auto w-full px-8 pb-12 space-y-6">
+			<!-- Info row -->
+			<div class="border border-base-300 rounded-md overflow-hidden">
+				<div class="grid grid-cols-3 divide-x divide-base-300">
+					<div class="flex flex-col gap-1 px-4 py-3">
+						<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">SVGs to generate</span>
+						<span class="text-sm font-mono">{ fmt.Sprintf("%d", viz.SVGCount()) }</span>
+					</div>
+					<div class="flex flex-col gap-1 px-4 py-3">
+						<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Toggleable axes</span>
+						<span class="text-sm font-mono">{ fmt.Sprintf("%d", len(viz.ToggleableAxes())) }</span>
+					</div>
+					<div class="flex flex-col gap-1 px-4 py-3">
+						<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Data path</span>
+						<span class="text-sm font-mono truncate">
+							if viz.DataPath != "" {
+								{ viz.DataPath }
+							} else {
+								<span class="text-base-300">—</span>
+							}
+						</span>
+					</div>
+				</div>
+			</div>
+			<!-- Toggles + SVG viewer -->
+			<div
+				class="border border-base-300 rounded-md overflow-hidden"
+				id="viz-viewer"
+				data-axes={ vizToggleAxesJSON(viz) }
+				data-svg-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/svg" }
+			>
+				<!-- Toggle controls — rendered by JS -->
+				<div id="viz-controls" class="px-4 py-3 border-b border-base-300 bg-base-50 space-y-2 hidden"></div>
+				<!-- SVG display -->
+				<div class="px-4 py-6 flex items-center justify-center min-h-[300px] bg-white" id="viz-svg-container">
+					<img
+						id="viz-svg-img"
+						src=""
+						alt="Visualization"
+						class="max-w-full hidden"
+					/>
+					<div id="viz-svg-placeholder" class="text-center text-base-400 text-sm space-y-2">
+						<p class="text-2xl">📊</p>
+						<p>No SVG generated yet.</p>
+						<p class="text-xs">Click <strong>Generate</strong> to run the viz script.</p>
+					</div>
+					<div id="viz-svg-error" class="text-center text-red-400 text-sm hidden">
+						Failed to load SVG.
+					</div>
+				</div>
+				<!-- Download bar -->
+				<div class="flex items-center justify-between px-4 py-2 border-t border-base-300 bg-base-50">
+					<span id="viz-svg-label" class="text-xs text-base-400 font-mono"></span>
+					<a id="viz-download-link" href="#" download class="text-xs text-accent-500 hover:underline hidden">Download SVG</a>
+				</div>
+			</div>
+			<!-- Axes config summary -->
+			if len(viz.Axes) > 0 {
+				<div class="border border-base-300 rounded-md overflow-hidden">
+					<div class="px-4 py-3 border-b border-base-300">
+						<span class="text-sm font-semibold">Axes configuration</span>
+					</div>
+					for i, ax := range viz.Axes {
+						<div class={ "px-4 py-3", templ.KV("border-t border-base-300", i > 0) }>
+							<div class="flex items-center gap-3 mb-1.5">
+								<span class="text-sm font-semibold">{ ax.Name }</span>
+								<code class="text-xs font-mono text-base-400">{ ax.Flag }</code>
+								if ax.Toggleable {
+									<span class="text-xs px-1.5 py-0.5 bg-accent-100 text-accent-700 rounded font-medium">toggleable</span>
+								} else {
+									<span class="text-xs px-1.5 py-0.5 bg-base-100 text-base-500 rounded font-medium">fixed</span>
+								}
+							</div>
+							<div class="flex flex-wrap gap-1.5">
+								for _, val := range ax.Values {
+									<code class="text-xs px-2 py-0.5 bg-base-100 rounded font-mono">{ val }</code>
+								}
+							</div>
+						</div>
+					}
+				</div>
+			}
+		</div>
+		<script>
+		(function () {
+		  const viewer   = document.getElementById('viz-viewer');
+		  const controls = document.getElementById('viz-controls');
+		  const img      = document.getElementById('viz-svg-img');
+		  const placeholder = document.getElementById('viz-svg-placeholder');
+		  const errEl    = document.getElementById('viz-svg-error');
+		  const label    = document.getElementById('viz-svg-label');
+		  const dlLink   = document.getElementById('viz-download-link');
+		  const baseURL  = viewer.dataset.svgUrl;
+		  const axes     = JSON.parse(viewer.dataset.axes || '[]');
+
+		  // Current selection: axis name → value string
+		  const selection = {};
+		  axes.forEach(ax => { selection[ax.name] = ax.values[0] || ''; });
+
+		  function buildURL() {
+		    const params = new URLSearchParams();
+		    axes.forEach(ax => { params.set(ax.name, selection[ax.name]); });
+		    return baseURL + (axes.length ? '?' + params.toString() : '');
+		  }
+
+		  function loadSVG() {
+		    const url = buildURL();
+		    label.textContent = url.split('?')[1] || '';
+		    // update browser URL without reload
+		    const pageParams = new URLSearchParams(window.location.search);
+		    axes.forEach(ax => pageParams.set(ax.name, selection[ax.name]));
+		    const newURL = window.location.pathname + (axes.length ? '?' + pageParams.toString() : '');
+		    window.history.replaceState(null, '', newURL);
+
+		    img.classList.add('hidden');
+		    errEl.classList.add('hidden');
+		    placeholder.classList.add('hidden');
+
+		    const testImg = new Image();
+		    testImg.onload = function () {
+		      img.src = url;
+		      img.classList.remove('hidden');
+		      dlLink.href = url;
+		      dlLink.classList.remove('hidden');
+		    };
+		    testImg.onerror = function () {
+		      if (axes.length === 0) {
+		        placeholder.classList.remove('hidden');
+		      } else {
+		        errEl.classList.remove('hidden');
+		      }
+		      dlLink.classList.add('hidden');
+		    };
+		    testImg.src = url;
+		  }
+
+		  function renderControls() {
+		    if (axes.length === 0) return;
+		    controls.classList.remove('hidden');
+		    controls.innerHTML = '';
+		    axes.forEach(ax => {
+		      const row = document.createElement('div');
+		      row.className = 'flex items-center gap-2 flex-wrap';
+		      const lbl = document.createElement('span');
+		      lbl.className = 'text-xs font-semibold text-base-500 uppercase tracking-wide w-20 shrink-0';
+		      lbl.textContent = ax.name;
+		      row.appendChild(lbl);
+		      ax.values.forEach(val => {
+		        const btn = document.createElement('button');
+		        btn.type = 'button';
+		        btn.textContent = val;
+		        btn.dataset.axis = ax.name;
+		        btn.dataset.value = val;
+		        btn.className = 'px-3 py-1 text-xs rounded-full border transition-colors ' +
+		          (selection[ax.name] === val
+		            ? 'bg-accent-500 text-white border-accent-600'
+		            : 'border-base-300 text-base-600 hover:border-accent-400 hover:text-accent-600');
+		        btn.addEventListener('click', function () {
+		          selection[ax.name] = val;
+		          renderControls();
+		          loadSVG();
+		        });
+		        row.appendChild(btn);
+		      });
+		      controls.appendChild(row);
+		    });
+		  }
+
+		  // Read initial selection from URL params
+		  const pageParams = new URLSearchParams(window.location.search);
+		  axes.forEach(ax => {
+		    const v = pageParams.get(ax.name);
+		    if (v && ax.values.includes(v)) selection[ax.name] = v;
+		  });
+
+		  renderControls();
+		  loadSVG();
+		})();
+		</script>
+	}
+}

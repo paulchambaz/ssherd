@@ -69,7 +69,7 @@ func (s *Server) postProxy(w http.ResponseWriter, r *http.Request) {
 		Hostname: strings.TrimSpace(r.FormValue("hostname")),
 		User:     strings.TrimSpace(r.FormValue("user")),
 		Port:     port,
-    Protocol: protocol,
+		Protocol: protocol,
 		Password: r.FormValue("password"),
 	}
 
@@ -183,6 +183,16 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var proxyProtocol int
+	if proxyID != "" {
+		proxy := store.FindProxy(proxyID)
+		if proxy == nil {
+			http.Error(w, "Proxy not found", http.StatusBadRequest)
+			return
+		}
+		proxyProtocol = proxy.Protocol
+	}
+
 	var errs []string
 	for _, suffix := range suffixes {
 		name := prefix + suffix
@@ -202,6 +212,7 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 			Name:     name,
 			Hostname: hostname,
 			User:     user,
+			Protocol: proxyProtocol,
 			ProxyID:  proxyID,
 		}
 		store.Machines = append(store.Machines, m)

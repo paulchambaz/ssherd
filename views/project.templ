@@ -1,0 +1,260 @@
+package views
+
+import (
+	"fmt"
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+templ ProjectPage(data internal.ProjectPageData) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+		}
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+			<div class="mb-6">
+				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
+					<a href="/" class="hover:text-base-700">Projects</a>
+					<span>/</span>
+					<span class="text-base-700">{ data.Project.Name }</span>
+				</div>
+				<h1 class="text-2xl font-bold">{ data.Project.Name }</h1>
+				<p class="text-sm text-base-500 font-mono mt-0.5">{ data.Project.RemotePath }</p>
+			</div>
+			@projectTabs(data.Project, data.Tab)
+		</div>
+		<div class="max-w-5xl mx-auto w-full px-8 mt-6 pb-12">
+			switch data.Tab {
+				case internal.TabDashboard:
+					@projectDashboard(data.Project, data.Jobs)
+				case internal.TabJobs:
+					@projectJobs(data.Project, data.Jobs)
+				case internal.TabVisualizations:
+					@projectVisualizations(data.Project, data.Visualizations)
+				case internal.TabFiles:
+					@projectFiles(data.Project)
+				case internal.TabSettings:
+					@projectSettings(data.Project)
+			}
+		</div>
+	}
+}
+
+templ projectTabs(p *internal.Project, active internal.ProjectTab) {
+	<nav class="flex border-b border-base-300">
+		@projectTabLink("/projects/"+p.Slug, "Dashboard", active == internal.TabDashboard)
+		@projectTabLink("/projects/"+p.Slug+"/jobs", "Jobs", active == internal.TabJobs)
+		@projectTabLink("/projects/"+p.Slug+"/visualizations", "Visualizations", active == internal.TabVisualizations)
+		@projectTabLink("/projects/"+p.Slug+"/files", "Files", active == internal.TabFiles)
+		@projectTabLink("/projects/"+p.Slug+"/settings", "Settings", active == internal.TabSettings)
+	</nav>
+}
+
+templ projectTabLink(href, label string, active bool) {
+	<a
+		href={ templ.SafeURL(href) }
+		class={
+			"px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+			templ.KV("border-accent-500 text-accent-600", active),
+			templ.KV("border-transparent text-base-500 hover:text-base-800 hover:border-base-400", !active),
+		}
+	>{ label }</a>
+}
+
+templ projectDashboard(p *internal.Project, jobs []*internal.Job) {
+	{{ active, done, failed := countJobsByStatus(jobs) }}
+	<div class="grid grid-cols-3 gap-4 mb-8">
+		@statCard("Active jobs", fmt.Sprintf("%d", active), "running")
+		@statCard("Completed", fmt.Sprintf("%d", done), "done")
+		@statCard("Failed", fmt.Sprintf("%d", failed), "failed")
+	</div>
+	<div class="grid grid-cols-2 gap-6">
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			<div class="px-4 py-3 border-b border-base-300 flex items-center justify-between">
+				<span class="text-sm font-semibold">Latest visualization</span>
+				<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="text-xs text-accent-500 hover:underline">View all</a>
+			</div>
+			<div class="px-4 py-10 text-center text-base-400 text-sm">No visualizations yet</div>
+		</div>
+		<div class="border border-base-300 rounded-md overflow-hidden">
+			<div class="px-4 py-3 border-b border-base-300 flex items-center justify-between">
+				<span class="text-sm font-semibold">Recent jobs</span>
+				<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="text-xs text-accent-500 hover:underline">View all</a>
+			</div>
+			if len(jobs) == 0 {
+				<div class="px-4 py-10 text-center text-base-400 text-sm">No jobs yet</div>
+			} else {
+				for i, j := range jobs {
+					if i >= 5 {
+						break
+					}
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class={ "flex items-center justify-between px-4 py-2.5 hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }>
+						<span class="text-sm truncate max-w-[200px]">{ j.DisplayName }</span>
+						<span class={ "text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2", j.Status.BadgeClass() }>{ j.Status.Label() }</span>
+					</a>
+				}
+			}
+		</div>
+	</div>
+}
+
+templ statCard(label, value, kind string) {
+	<div class="border border-base-300 rounded-md px-4 py-3">
+		<div class="text-xs text-base-500 uppercase tracking-wide font-semibold mb-1">{ label }</div>
+		<div
+			class={
+				"text-2xl font-bold",
+				templ.KV("text-accent-600", kind == "running"),
+				templ.KV("text-green-600", kind == "done"),
+				templ.KV("text-red-500", kind == "failed"),
+			}
+		>{ value }</div>
+	</div>
+}
+
+templ projectJobs(p *internal.Project, jobs []*internal.Job) {
+	<div class="flex items-center justify-between mb-4">
+		<div class="flex items-center gap-3">
+			<h2 class="text-base font-semibold">Jobs</h2>
+			<span class="text-sm text-base-400">{ fmt.Sprintf("%d total", len(jobs)) }</span>
+		</div>
+		<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/new") } class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+			New batch
+		</a>
+	</div>
+	<div class="border border-base-300 rounded-md overflow-hidden">
+		if len(jobs) == 0 {
+			<div class="px-6 py-12 text-center text-base-400 text-sm">
+				No jobs yet. Create a batch to get started.
+			</div>
+		} else {
+			<table class="w-full text-sm">
+				<thead>
+					<tr class="border-b border-base-300 text-xs text-base-500 uppercase tracking-wide">
+						<th class="text-left px-4 py-2.5 font-semibold">Name</th>
+						<th class="text-left px-4 py-2.5 font-semibold">Status</th>
+						<th class="text-left px-4 py-2.5 font-semibold">Machine</th>
+						<th class="text-left px-4 py-2.5 font-semibold">Progress</th>
+						<th class="text-left px-4 py-2.5 font-semibold">Created</th>
+						<th class="px-4 py-2.5"></th>
+					</tr>
+				</thead>
+				<tbody>
+					for i, j := range jobs {
+						<tr class={ "hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }>
+							<td class="px-4 py-3 max-w-[260px]">
+								<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class="font-medium hover:text-accent-600 truncate block">
+									{ j.DisplayName }
+								</a>
+							</td>
+							<td class="px-4 py-3">
+								<span class={ "text-xs px-2 py-0.5 rounded-full font-medium", j.Status.BadgeClass() }>
+									{ j.Status.Label() }
+								</span>
+							</td>
+							<td class="px-4 py-3 font-mono text-xs text-base-500">
+								if j.Machine != "" {
+									{ j.Machine }
+								} else {
+									<span class="text-base-300">—</span>
+								}
+							</td>
+							<td class="px-4 py-3 w-40">
+								if j.Progress != nil {
+									<div class="flex items-center gap-2">
+										<div class="flex-1 bg-base-200 rounded-full h-1.5">
+											<div class="bg-accent-500 h-1.5 rounded-full" style={ fmt.Sprintf("width:%.0f%%", j.Progress.Percent) }></div>
+										</div>
+										<span class="text-xs text-base-400 shrink-0">{ fmt.Sprintf("%.0f%%", j.Progress.Percent) }</span>
+									</div>
+								} else {
+									<span class="text-base-300 text-xs">—</span>
+								}
+							</td>
+							<td class="px-4 py-3 text-xs text-base-400 whitespace-nowrap">
+								{ j.CreatedAt.Format("Jan 02, 15:04") }
+							</td>
+							<td class="px-4 py-3 text-right">
+								<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class="text-xs text-accent-500 hover:underline">
+									View →
+								</a>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</div>
+}
+
+templ projectVisualizations(p *internal.Project, vizs []*internal.Visualization) {
+	<div class="flex items-center justify-between mb-4">
+		<div class="flex items-center gap-3">
+			<h2 class="text-base font-semibold">Visualizations</h2>
+			<span class="text-sm text-base-400">{ fmt.Sprintf("%d configured", len(vizs)) }</span>
+		</div>
+		<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/new") } class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+			New visualization
+		</a>
+	</div>
+	<div class="border border-base-300 rounded-md overflow-hidden">
+		if len(vizs) == 0 {
+			<div class="px-6 py-12 text-center text-base-400 text-sm">
+				No visualizations configured yet.
+			</div>
+		} else {
+			for i, v := range vizs {
+				<a
+					href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + v.ID) }
+					class={ "flex items-center justify-between px-4 py-3 hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }
+				>
+					<div class="flex flex-col gap-0.5 min-w-0">
+						<span class="font-medium text-sm">{ v.Name }</span>
+						<span class="text-xs text-base-400 font-mono">{ v.VizScript }</span>
+					</div>
+					<div class="flex items-center gap-4 shrink-0 ml-4">
+						<span class="text-xs text-base-400">{ fmt.Sprintf("%d SVG%s", v.SVGCount(), func() string { if v.SVGCount() != 1 { return "s" }; return "" }()) }</span>
+						<span class="text-xs text-accent-500">View →</span>
+					</div>
+				</a>
+			}
+		}
+	</div>
+}
+
+templ projectFiles(p *internal.Project) {
+	<div class="flex items-center justify-between mb-4">
+		<h2 class="text-base font-semibold">Files</h2>
+		<button disabled class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md opacity-50 cursor-not-allowed">
+			Sync now
+		</button>
+	</div>
+	<div class="border border-base-300 rounded-md overflow-hidden">
+		<div class="px-6 py-12 text-center text-base-400 text-sm">No local files yet. Sync from the cluster to get started.</div>
+	</div>
+}
+
+templ projectSettings(p *internal.Project) {
+	<div class="mx-auto space-y-20">
+		<div>
+			<h2 class="text-base font-semibold mb-1">General</h2>
+			<p class="text-sm text-base-500 mb-4 pb-4 border-b border-base-300">Update the project configuration.</p>
+			@projectForm("/projects/"+p.Slug, p, "Save changes")
+		</div>
+		<div>
+			<div class="flex items-start justify-between mb-4 pb-4 border-b border-base-300">
+				<div>
+					<h2 class="text-base font-semibold mb-1">Danger zone</h2>
+					<p class="text-sm text-base-500">Deleting a project is permanent and cannot be undone.</p>
+				</div>
+				<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/delete") }>
+					<button
+						type="submit"
+						class="px-4 py-2 text-sm font-medium text-red-500 border border-red-500 rounded-md hover:bg-red-500/20 shrink-0 ml-8"
+						onclick="return confirm('Delete this project? This cannot be undone.')"
+					>Delete project</button>
+				</form>
+			</div>
+		</div>
+	</div>
+}

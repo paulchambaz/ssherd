@@ -31,7 +31,7 @@ func main() {
 
 	srv, err := daemon.NewServer(&config)
 	if err != nil {
-		log.Printf("Could not create server %s", err)
+		log.Fatalf("Could not create server %s", err)
 	}
 	srv.Run()
 }

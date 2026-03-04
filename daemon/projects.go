@@ -118,7 +118,7 @@ func (s *Server) postUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/projects", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) postDeleteProject(w http.ResponseWriter, r *http.Request) {
