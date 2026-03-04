@@ -34,7 +34,7 @@ templ Machines(store *internal.MachinesStore) {
 							</div>
 							<div class="flex items-center gap-3 shrink-0">
 								<form method="POST" action={ templ.SafeURL("/proxies/" + p.ID + "/delete") }>
-									<button type="submit" class="text-xs text-red-500 hover:text-red-700 hover:underline">
+									<button type="submit" class="text-xs px-2 py-1 rounded-md text-red-500 border border-red-500 hover:bg-red-500/20 hover:underline">
 										Delete
 									</button>
 								</form>
@@ -75,7 +75,7 @@ templ Machines(store *internal.MachinesStore) {
 									<span class="text-xs text-base-400">direct</span>
 								}
 								<form method="POST" action={ templ.SafeURL("/machines/" + m.ID + "/delete") }>
-									<button type="submit" class="text-xs text-red-500 hover:text-red-700 hover:underline">
+									<button type="submit" class="text-xs px-2 py-1 rounded-md text-red-500 border border-red-500 hover:bg-red-500/20 hover:underline">
 										Delete
 									</button>
 								</form>

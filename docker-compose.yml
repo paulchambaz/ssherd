@@ -1,0 +1,12 @@
+services:
+  ssherd:
+    image: ssherd:latest
+    network_mode: host
+    environment:
+      SSHERD_SERVER_HOST: "0.0.0.0"
+    volumes:
+      - ssherd_logs:/var/log/ssherd
+    restart: unless-stopped
+
+volumes:
+  ssherd_logs:

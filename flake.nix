@@ -33,7 +33,7 @@
           pname = "ssherd";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-3tqKrCOhQXAWUBMip+UxBDW9EAiAEXMSqOtfg8qmKT8=";
+          vendorHash = "sha256-RvoYqSLlMtiUOy9g7102qbH6LMMD+PZpDXSBNcvXatE=";
 
           nativeBuildInputs = buildPkgs;
 
@@ -45,7 +45,7 @@
           buildPhase = ''
             go test ./tests/...
             mkdir -p bin
-            go build -o bin/ssherd ./ssherd
+            go build -o bin/ssherd .
             scdoc < ssherd.1.scd | sed "s/1980-01-01/$(date '+%B %Y')/" > ssherd.1
           '';
 
@@ -72,7 +72,7 @@
             config = {
               Cmd = [ "${ssherd}/dist/usr/bin/ssherd" ];
               ExposedPorts = {
-                "1265/tcp" = { };
+                "1321/tcp" = { };
               };
               Env = [
                 "SSHERD_SERVER_HOST=0.0.0.0"
