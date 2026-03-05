@@ -3,8 +3,11 @@ package daemon
 import (
 	"encoding/json"
 	"log"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,9 +40,10 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	vizScript := strings.TrimSpace(r.FormValue("viz_script"))
-	if name == "" || vizScript == "" {
-		http.Error(w, "Name and viz script are required", http.StatusBadRequest)
+	vizCommand := strings.TrimSpace(r.FormValue("viz_command"))
+	outputTemplate := strings.TrimSpace(r.FormValue("output_file_template"))
+	if name == "" || vizCommand == "" || outputTemplate == "" {
+		http.Error(w, "Name, viz script and output template are required", http.StatusBadRequest)
 		return
 	}
 
@@ -67,10 +71,8 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(vals) > 0 {
 			axes = append(axes, internal.VizAxis{
-				Name:       strings.TrimSpace(a.Name),
-				Flag:       strings.TrimSpace(a.Flag),
-				Values:     vals,
-				Toggleable: a.Toggleable,
+				Name:   strings.TrimSpace(a.Name),
+				Values: vals,
 			})
 		}
 	}
@@ -81,16 +83,20 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	buildRemote := r.FormValue("build_remote") == "on" || r.FormValue("build_remote") == "true"
+
 	now := time.Now()
 	viz := &internal.Visualization{
-		ID:        id,
-		ProjectID: p.ID,
-		Name:      name,
-		VizScript: absOrRelative(vizScript, p.RemotePath),
-		DataPath:  absOrRelative(strings.TrimSpace(r.FormValue("data_path")), p.RemotePath),
-		Axes:      axes,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                 id,
+		ProjectID:          p.ID,
+		Name:               name,
+		VizCommand:         vizCommand,
+		DataPath:           absOrRelative(strings.TrimSpace(r.FormValue("data_path")), p.RemotePath),
+		OutputFileTemplate: outputTemplate,
+		BuildRemote:        buildRemote,
+		Axes:               axes,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	if err := internal.SaveVisualization(s.cfg.CachePath, viz); err != nil {
@@ -113,13 +119,14 @@ func (s *Server) getVisualizationDetail(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
-	if err := views.VisualizationDetailPage(p, viz).Render(r.Context(), w); err != nil {
+	jobsWriting := s.scheduler.VizJobsWriting(p, viz)
+	genError := r.URL.Query().Get("gen_error")
+	if err := views.VisualizationDetailPage(p, viz, jobsWriting, genError).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-		log.Printf("Failed to render template: %v", err)
 	}
 }
 
-func (s *Server) getVisualizationSVG(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
 		http.NotFound(w, r)
@@ -130,8 +137,12 @@ func (s *Server) getVisualizationSVG(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if viz.OutputFileTemplate == "" {
+		http.NotFound(w, r)
+		return
+	}
 
-	// Build selection from URL query params
+	// Reconstruction de la sélection depuis les query params
 	selection := viz.DefaultSelection()
 	for _, ax := range viz.ToggleableAxes() {
 		if val := r.URL.Query().Get(ax.Name); val != "" {
@@ -145,17 +156,56 @@ func (s *Server) getVisualizationSVG(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := viz.ComboKey(selection)
-	svgPath := internal.VizSVGPath(s.cfg.CachePath, p.ID, viz.ID, key)
+	localRepoDir := filepath.Join(s.cfg.CachePath, p.ID, "repo")
+	outputPath := internal.VizLocalOutputPath(localRepoDir, viz.OutputFileTemplate, key)
 
-	data, err := os.ReadFile(svgPath)
+	data, err := os.ReadFile(outputPath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	w.Header().Set("Content-Type", "image/svg+xml")
+	ext := filepath.Ext(outputPath)
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Write(data)
+}
+
+func (s *Server) postGenerateVisualization(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	viz, err := internal.LoadVisualization(s.cfg.CachePath, p.ID, r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+	mode := r.FormValue("mode")
+	if mode == "" {
+		mode = "auto"
+	}
+
+	ok, genErr := s.scheduler.GenerateVizNow(p, viz, mode)
+	base := "/projects/" + p.Slug + "/visualizations/" + viz.ID
+	if genErr != nil && ok == 0 {
+		http.Redirect(w, r, base+"?gen_error="+url.QueryEscape(genErr.Error()), http.StatusSeeOther)
+		return
+	}
+	if genErr != nil {
+		log.Printf("viz: GenerateVizNow partial failure (%d ok): %v", ok, genErr)
+	}
+	http.Redirect(w, r, base, http.StatusSeeOther)
 }
 
 func (s *Server) postDeleteVisualization(w http.ResponseWriter, r *http.Request) {
@@ -170,14 +220,4 @@ func (s *Server) postDeleteVisualization(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	http.Redirect(w, r, "/projects/"+p.Slug+"/visualizations", http.StatusSeeOther)
-}
-
-func (s *Server) postGenerateVisualization(w http.ResponseWriter, r *http.Request) {
-	// Stub — generation will be triggered by the scheduler once SSH is wired.
-	p, err := s.findProjectBySlug(r.PathValue("slug"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	http.Redirect(w, r, "/projects/"+p.Slug+"/visualizations/"+r.PathValue("id"), http.StatusSeeOther)
 }

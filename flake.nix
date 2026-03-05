@@ -22,6 +22,11 @@
           tailwindcss_4
         ];
 
+        runPkgs = with pkgs; [
+          rsync
+          nix
+        ];
+
         devPkgs = with pkgs; [
           just
           air
@@ -35,10 +40,10 @@
           src = ./.;
           vendorHash = "sha256-RvoYqSLlMtiUOy9g7102qbH6LMMD+PZpDXSBNcvXatE=";
 
-          nativeBuildInputs = buildPkgs;
+          nativeBuildInputs = buildPkgs ++ runPkgs;
 
           postPatch = ''
-            tailwindcss -i static/css/main.css -o static/css/styles.css -m
+            tailwindcss --input static/css/main.css --ouput static/css/styles.css --minify --optimize
             templ generate
           '';
 
@@ -81,7 +86,7 @@
           };
         };
         devShell = pkgs.mkShell {
-          nativeBuildInputs = buildPkgs;
+          nativeBuildInputs = buildPkgs ++ runPkgs;
           buildInputs = devPkgs;
         };
       }

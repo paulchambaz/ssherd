@@ -2,6 +2,7 @@ package views
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/paulchambaz/ssherd/internal"
 )
@@ -27,10 +28,21 @@ func vizToggleAxesJSON(viz *internal.Visualization) string {
 	}
 	var axes []axisJS
 	for _, ax := range viz.Axes {
-		if ax.Toggleable {
-			axes = append(axes, axisJS{Name: ax.Name, Values: ax.Values})
-		}
+		axes = append(axes, axisJS{Name: ax.Name, Values: ax.Values})
 	}
 	b, _ := json.Marshal(axes)
 	return string(b)
+}
+
+func formatFileSize(b int64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(b)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }

@@ -5,4 +5,6 @@ type ProjectPageData struct {
 	Tab            ProjectTab
 	Jobs           []*Job
 	Visualizations []*Visualization
+	RepoFiles      []RepoFile
+	RepoSubPath    string
 }

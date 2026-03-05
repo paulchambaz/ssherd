@@ -106,6 +106,7 @@ templ NewProject() {
 		@Header() {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
 		}
 		<main class="flex-1 p-8 max-w-2xl mx-auto w-full mt-4">
 			<h2 class="text-xl font-semibold mb-1">Create a new project</h2>
@@ -122,6 +123,7 @@ templ EditProject(p *internal.Project) {
 		@Header() {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
 		}
 		<main class="flex-1 p-8 max-w-2xl mx-auto w-full mt-4">
 			<h2 class="text-xl font-semibold mb-1">Edit { p.Name }</h2>

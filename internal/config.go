@@ -94,4 +94,3 @@ func (cfg *Config) validate() error {
 
 	return nil
 }
-

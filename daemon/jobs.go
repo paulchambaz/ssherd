@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,8 +71,13 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 
 	logPathTpl := strings.TrimSpace(r.FormValue("log_path"))
 	outputPathTpl := strings.TrimSpace(r.FormValue("output_path"))
-	logParserScript := absOrRelative(strings.TrimSpace(r.FormValue("log_parser_script")), p.RemotePath)
-	vizScript := absOrRelative(strings.TrimSpace(r.FormValue("viz_script")), p.RemotePath)
+
+	var outputFilesTpls []string
+	for _, line := range strings.Split(r.FormValue("output_files"), "\n") {
+		if f := strings.TrimSpace(line); f != "" {
+			outputFilesTpls = append(outputFilesTpls, f)
+		}
+	}
 
 	var axes []axisInput
 	if raw := r.FormValue("axes_json"); raw != "" {
@@ -81,7 +87,6 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Build axis value lists for cartesian product
 	axisValues := make([][]string, 0, len(axes))
 	for _, ax := range axes {
 		var vals []string
@@ -96,21 +101,30 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	combos := internal.CartesianProduct(axisValues)
-
-	nfsSchedulerBase := filepath.Dir(p.RemotePath) + "/.ppti-scheduler"
+	nfsSchedulerBase := filepath.Dir(p.RemotePath) + "/.ssherd"
 	now := time.Now()
 
 	for _, combo := range combos {
 		for seed := 1; seed <= numSeeds; seed++ {
-			// substitution variables: axis name → last token of value, seed → number
-			vars := map[string]string{"seed": strconv.Itoa(seed)}
+			ablationParts := make([]string, 0, len(combo))
+			for _, v := range combo {
+				ablationParts = append(ablationParts, internal.Slugify(lastToken(v)))
+			}
+			ablation := strings.Join(ablationParts, "_")
+			if ablation == "" {
+				ablation = "run"
+			}
+
+			vars := map[string]string{
+				"seed":     strconv.Itoa(seed),
+				"ablation": ablation,
+			}
 			for i, ax := range axes {
 				if i < len(combo) {
 					vars[ax.Name] = lastToken(combo[i])
 				}
 			}
 
-			// display name
 			parts := []string{namePrefix}
 			for _, v := range combo {
 				parts = append(parts, lastToken(v))
@@ -118,18 +132,23 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 			parts = append(parts, "seed "+strconv.Itoa(seed))
 			displayName := strings.Join(parts, " - ")
 
-			// commands
 			cmdTokens := append([]string{baseCommand}, combo...)
 			cmdTokens = append(cmdTokens, seedFlag, strconv.Itoa(seed))
-			runCmd := "cd " + p.RemotePath + " && " + strings.Join(cmdTokens, " ")
+			runCmd := substituteVars("cd "+p.RemotePath+" && "+strings.Join(cmdTokens, " "), vars)
 			retryCmd := runCmd
 			if retrySuffix != "" {
 				retryCmd += " " + retrySuffix
 			}
 
-			// paths
 			logPath := absOrRelative(substituteVars(logPathTpl, vars), p.RemotePath)
 			outputPath := absOrRelative(substituteVars(outputPathTpl, vars), p.RemotePath)
+
+			var outputFiles []string
+			for _, tpl := range outputFilesTpls {
+				if f := absOrRelative(substituteVars(tpl, vars), outputPath); f != "" {
+					outputFiles = append(outputFiles, f)
+				}
+			}
 
 			id, err := internal.GenerateID()
 			if err != nil {
@@ -138,20 +157,19 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 			}
 
 			job := &internal.Job{
-				ID:              id,
-				ProjectID:       p.ID,
-				ProjectSlug:     p.Slug,
-				DisplayName:     displayName,
-				Status:          internal.JobPending,
-				CreatedAt:       now,
-				MaxRetries:      maxRetries,
-				RunCommand:      runCmd,
-				RetryCommand:    retryCmd,
-				LogPath:         logPath,
-				OutputPath:      outputPath,
-				LogParserScript: logParserScript,
-				VizScript:       vizScript,
-				NfsJobDir:       nfsSchedulerBase + "/jobs/" + id,
+				ID:           id,
+				ProjectID:    p.ID,
+				ProjectSlug:  p.Slug,
+				DisplayName:  displayName,
+				Status:       internal.JobPending,
+				CreatedAt:    now,
+				MaxRetries:   maxRetries,
+				RunCommand:   runCmd,
+				RetryCommand: retryCmd,
+				LogPath:      logPath,
+				OutputPath:   outputPath,
+				NfsJobDir:    nfsSchedulerBase + "/jobs/" + id,
+				OutputFiles:  outputFiles,
 				GPURequirements: internal.GPURequirements{
 					MinVRAMMB:    minVRAM,
 					PreferredGPU: preferredGPU,
@@ -163,6 +181,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Failed to save job", http.StatusInternalServerError)
 				return
 			}
+			s.scheduler.AddTask(job)
 		}
 	}
 
@@ -180,10 +199,53 @@ func (s *Server) getJobDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := views.JobDetailPage(p, job).Render(r.Context(), w); err != nil {
+
+	localJobDir := filepath.Join(s.cfg.CachePath, p.ID, "jobs", job.ID)
+
+	var stdoutLog, stderrLog string
+	if data, err := os.ReadFile(filepath.Join(localJobDir, "stdout.log")); err == nil {
+		stdoutLog = string(data)
+	}
+	if data, err := os.ReadFile(filepath.Join(localJobDir, "stderr.log")); err == nil {
+		stderrLog = string(data)
+	}
+
+	if err := views.JobDetailPage(p, job, stdoutLog, stderrLog).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		log.Printf("Failed to render template: %v", err)
 	}
+}
+
+func (s *Server) getJobLogStdout(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	logPath := filepath.Join(s.cfg.CachePath, p.ID, "jobs", r.PathValue("id"), "stdout.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
+}
+
+func (s *Server) getJobLogStderr(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	logPath := filepath.Join(s.cfg.CachePath, p.ID, "jobs", r.PathValue("id"), "stderr.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(data)
 }
 
 func (s *Server) postCancelJob(w http.ResponseWriter, r *http.Request) {
@@ -197,11 +259,13 @@ func (s *Server) postCancelJob(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	job.Status = internal.JobCancelled
-	now := time.Now()
-	job.FinishedAt = &now
-	if err := internal.SaveJob(s.cfg.CachePath, job); err != nil {
-		http.Error(w, "Failed to save job", http.StatusInternalServerError)
+	if job.Status != internal.JobRunning && job.Status != internal.JobPending {
+		http.Error(w, "Job is not running or pending", http.StatusBadRequest)
+		return
+	}
+	if err := s.scheduler.CancelJob(job.ID); err != nil {
+		log.Printf("postCancelJob: %v", err)
+		http.Error(w, "Failed to cancel job: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
@@ -218,6 +282,10 @@ func (s *Server) postRetryJob(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if job.Status != internal.JobFailed && job.Status != internal.JobStalled && job.Status != internal.JobCancelled {
+		http.Error(w, "Job cannot be retried in its current state", http.StatusBadRequest)
+		return
+	}
 	job.Status = internal.JobPending
 	job.RetryCount++
 	job.RunCommand = job.RetryCommand
@@ -229,6 +297,7 @@ func (s *Server) postRetryJob(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save job", http.StatusInternalServerError)
 		return
 	}
+	s.scheduler.RequeueJob(job)
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
 }
 

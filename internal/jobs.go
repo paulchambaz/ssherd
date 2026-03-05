@@ -57,8 +57,10 @@ func (s JobStatus) BadgeClass() string {
 type JobProgress struct {
 	CurrentStep int       `json:"current_step"`
 	TotalSteps  int       `json:"total_steps"`
+	StartTime   time.Time `json:"start_time"`
+	CurrentTime time.Time `json:"current_time"`
 	Percent     float64   `json:"percent"`
-	Label       string    `json:"label"`
+	ETASeconds  float64   `json:"eta_seconds"`
 	LastUpdated time.Time `json:"last_updated"`
 }
 
@@ -83,11 +85,17 @@ type Job struct {
 	RunCommand   string `json:"run_command"`
 	RetryCommand string `json:"retry_command"`
 
-	LogPath         string `json:"log_path"`
-	OutputPath      string `json:"output_path"`
-	LogParserScript string `json:"log_parser_script"`
-	VizScript       string `json:"viz_script"`
-	NfsJobDir       string `json:"nfs_job_dir"`
+	// LogPath est un fichier JSON écrit par le script d'entraînement avec la
+	// progression. OutputPath est le dossier de résultats bruts.
+	LogPath    string `json:"log_path"`
+	OutputPath string `json:"output_path"`
+
+	// NfsJobDir est le dossier de travail sur NFS (.ssherd/jobs/<id>/).
+	NfsJobDir string `json:"nfs_job_dir"`
+
+	// OutputFiles est la liste des fichiers que ce job écrit et que le système
+	// doit surveiller (onglet Files). Ne jamais supprimer tant que le job tourne.
+	OutputFiles []string `json:"output_files,omitempty"`
 
 	Progress        *JobProgress    `json:"progress,omitempty"`
 	GPURequirements GPURequirements `json:"gpu_requirements"`
@@ -149,8 +157,6 @@ func LoadJobs(cachePath, projectID string) ([]*Job, error) {
 	return jobs, nil
 }
 
-// CartesianProduct returns all combinations across axes.
-// CartesianProduct([["a","b"],["x","y"]]) → [["a","x"],["a","y"],["b","x"],["b","y"]]
 func CartesianProduct(axes [][]string) [][]string {
 	if len(axes) == 0 {
 		return [][]string{{}}

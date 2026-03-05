@@ -207,6 +207,8 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		gpuModel := strings.TrimSpace(r.FormValue("gpu_model"))
+
 		m := &internal.Machine{
 			ID:       id,
 			Name:     name,
@@ -214,6 +216,7 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 			User:     user,
 			Protocol: proxyProtocol,
 			ProxyID:  proxyID,
+			GPUModel: gpuModel,
 		}
 		store.Machines = append(store.Machines, m)
 	}

@@ -11,10 +11,8 @@ import (
 )
 
 type VizAxis struct {
-	Name       string   `json:"name"`
-	Flag       string   `json:"flag"`
-	Values     []string `json:"values"`
-	Toggleable bool     `json:"toggleable"`
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
 }
 
 type VizCombo struct {
@@ -23,33 +21,28 @@ type VizCombo struct {
 }
 
 type Visualization struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	Name      string    `json:"name"`
-	VizScript string    `json:"viz_script"`
-	DataPath  string    `json:"data_path"`
-	Axes      []VizAxis `json:"axes"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"project_id"`
+	Name               string    `json:"name"`
+	VizCommand         string    `json:"viz_command"`
+	DataPath           string    `json:"data_path"`
+	OutputFileTemplate string    `json:"output_file_template"`
+	BuildRemote        bool      `json:"build_remote"`
+	Axes               []VizAxis `json:"axes"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func (v *Visualization) ToggleableAxes() []VizAxis {
-	var out []VizAxis
-	for _, ax := range v.Axes {
-		if ax.Toggleable {
-			out = append(out, ax)
-		}
-	}
-	return out
+	return v.Axes
 }
 
 func (v *Visualization) SVGCount() int {
-	axes := v.ToggleableAxes()
-	if len(axes) == 0 {
+	if len(v.Axes) == 0 {
 		return 1
 	}
 	n := 1
-	for _, ax := range axes {
+	for _, ax := range v.Axes {
 		if len(ax.Values) > 0 {
 			n *= len(ax.Values)
 		}
@@ -57,7 +50,16 @@ func (v *Visualization) SVGCount() int {
 	return n
 }
 
-// ComboKey returns a filesystem-safe key for a given axis name → value string selection.
+func (v *Visualization) DefaultSelection() map[string]string {
+	sel := map[string]string{}
+	for _, ax := range v.Axes {
+		if len(ax.Values) > 0 {
+			sel[ax.Name] = ax.Values[0]
+		}
+	}
+	return sel
+}
+
 func (v *Visualization) ComboKey(selection map[string]string) string {
 	axes := v.ToggleableAxes()
 	if len(axes) == 0 {
@@ -78,31 +80,12 @@ func (v *Visualization) ComboKey(selection map[string]string) string {
 	return strings.Join(parts, "-")
 }
 
-func (v *Visualization) DefaultSelection() map[string]string {
-	sel := map[string]string{}
-	for _, ax := range v.ToggleableAxes() {
-		if len(ax.Values) > 0 {
-			sel[ax.Name] = ax.Values[0]
-		}
-	}
-	return sel
-}
-
 func (v *Visualization) AllCombos() []VizCombo {
-	toggleable := v.ToggleableAxes()
-
-	var fixedArgs []string
-	for _, ax := range v.Axes {
-		if !ax.Toggleable && len(ax.Values) > 0 {
-			fixedArgs = append(fixedArgs, ax.Flag, ax.Values[0])
-		}
+	if len(v.Axes) == 0 {
+		return []VizCombo{{Key: "default", Args: nil}}
 	}
 
-	if len(toggleable) == 0 {
-		return []VizCombo{{Key: "default", Args: fixedArgs}}
-	}
-
-	indexCombos := vizCartesianIndices(toggleable)
+	indexCombos := vizCartesianIndices(v.Axes)
 	var result []VizCombo
 	for _, idxCombo := range indexCombos {
 		parts := make([]string, len(idxCombo))
@@ -111,10 +94,11 @@ func (v *Visualization) AllCombos() []VizCombo {
 		}
 		key := strings.Join(parts, "-")
 
-		args := append([]string{}, fixedArgs...)
-		for i, ax := range toggleable {
-			args = append(args, ax.Flag, ax.Values[idxCombo[i]])
+		args := make([]string, 0, len(idxCombo))
+		for i, ax := range v.Axes {
+			args = append(args, ax.Values[idxCombo[i]])
 		}
+
 		result = append(result, VizCombo{Key: key, Args: args})
 	}
 	return result
@@ -137,6 +121,46 @@ func vizCartesianIndices(axes []VizAxis) [][]int {
 	return result
 }
 
+// VizLocalOutputPath retourne le chemin absolu local pour un combo donné.
+// Le template est relatif au repo local (ex: "results/figures/fig_{combo_key}.svg").
+func VizLocalOutputPath(localRepoDir, template, comboKey string) string {
+	path := strings.ReplaceAll(template, "{combo_key}", comboKey)
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(localRepoDir, path)
+}
+
+// VizRemoteTmpPath retourne le chemin temporaire sur le remote NFS pour un combo.
+// remoteBase est le parent du remoteProjectPath (là où vit .ssherd/).
+func VizRemoteTmpPath(remoteBase, vizID, comboKey, ext string) string {
+	return filepath.Join(remoteBase, ".ssherd", "viz", vizID, comboKey+ext)
+}
+
+// VizOutputExt extrait l'extension du template de sortie (".svg", ".png"...).
+func VizOutputExt(template string) string {
+	ext := filepath.Ext(template)
+	if ext == "" {
+		return ".svg"
+	}
+	return ext
+}
+
+// ResolveToLocal convertit un chemin absolu remote (sous remoteProjectPath)
+// vers son équivalent dans le repo local.
+func ResolveToLocal(remoteAbsPath, remoteProjectPath, localRepoDir string) string {
+	clean := strings.TrimSuffix(remoteProjectPath, "/")
+	if strings.HasPrefix(remoteAbsPath, clean+"/") {
+		rel := strings.TrimPrefix(remoteAbsPath, clean+"/")
+		return filepath.Join(localRepoDir, rel)
+	}
+	if remoteAbsPath == clean {
+		return localRepoDir
+	}
+	// chemin déjà relatif ou inconnu : on le colle au repo
+	return filepath.Join(localRepoDir, remoteAbsPath)
+}
+
 func vizDir(cachePath, projectID, vizID string) string {
 	return filepath.Join(cachePath, projectID, "visualizations", vizID)
 }
@@ -145,13 +169,9 @@ func vizFile(cachePath, projectID, vizID string) string {
 	return filepath.Join(vizDir(cachePath, projectID, vizID), "viz.json")
 }
 
-func VizSVGPath(cachePath, projectID, vizID, key string) string {
-	return filepath.Join(vizDir(cachePath, projectID, vizID), "svgs", key+".svg")
-}
-
 func SaveVisualization(cachePath string, viz *Visualization) error {
 	dir := vizDir(cachePath, viz.ProjectID, viz.ID)
-	if err := os.MkdirAll(filepath.Join(dir, "svgs"), 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("cannot create viz directory: %w", err)
 	}
 	data, err := json.MarshalIndent(viz, "", "  ")

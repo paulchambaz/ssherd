@@ -3,6 +3,9 @@ package daemon
 import (
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/paulchambaz/ssherd/internal"
 	"github.com/paulchambaz/ssherd/views"
@@ -53,8 +56,47 @@ func (s *Server) renderProjectTab(w http.ResponseWriter, r *http.Request, tab in
 		data.Visualizations = vizs
 	}
 
+	if tab == internal.TabFiles {
+		subPath := r.URL.Query().Get("path")
+		repoDir := filepath.Join(s.cfg.CachePath, p.ID, "repo")
+		files, err := internal.ListRepoDir(repoDir, subPath)
+		if err != nil {
+			log.Printf("Failed to list repo dir for project %s: %v", p.ID, err)
+		}
+		data.RepoFiles = files
+		data.RepoSubPath = subPath
+	}
+
 	if err := views.ProjectPage(data).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		log.Printf("Failed to render template: %v", err)
 	}
+}
+
+func (s *Server) getFileDownload(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	subPath := r.URL.Query().Get("path")
+	if subPath == "" {
+		http.Error(w, "Missing path", http.StatusBadRequest)
+		return
+	}
+	// Empêcher les path traversal
+	repoDir := filepath.Join(s.cfg.CachePath, p.ID, "repo")
+	fullPath := filepath.Join(repoDir, subPath)
+	if !strings.HasPrefix(fullPath, repoDir) {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(fullPath))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	http.ServeFile(w, r, fullPath)
 }

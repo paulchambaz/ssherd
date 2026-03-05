@@ -136,6 +136,19 @@ func (s *Server) postDeleteProject(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/projects", http.StatusSeeOther)
 }
 
+func (s *Server) postSyncFiles(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.scheduler.SyncRepoNow(p.ID); err != nil {
+		http.Error(w, "Sync failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/projects/"+p.Slug+"/files", http.StatusSeeOther)
+}
+
 func (s *Server) findProjectBySlug(slug string) (*internal.Project, error) {
 	projects, err := internal.LoadProjects(s.cfg.CachePath)
 	if err != nil {

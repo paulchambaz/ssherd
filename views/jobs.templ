@@ -3,6 +3,7 @@ package views
 import (
 	"fmt"
 	"github.com/paulchambaz/ssherd/internal"
+	"strings"
 )
 
 templ NewBatchPage(p *internal.Project) {
@@ -10,6 +11,7 @@ templ NewBatchPage(p *internal.Project) {
 		@Header() {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
 		}
 		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
 			<div class="mb-6">
@@ -58,7 +60,7 @@ templ newBatchForm(p *internal.Project) {
 							type="text"
 							name="log_path"
 							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
-							placeholder="results/{env}/seed_{seed}/train.log"
+							placeholder={ "results/{ablation}/seed_{seed}/progress.json" }
 						/>
 					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
@@ -69,33 +71,20 @@ templ newBatchForm(p *internal.Project) {
 							type="text"
 							name="output_path"
 							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
-							placeholder="results/{env}/seed_{seed}/"
+							placeholder={ "results/{ablation}/seed_{seed}/" }
 						/>
 					</div>
 				</div>
-				<div class="flex border-b border-base-300">
-					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
-						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
-							Log parser script <span class="normal-case font-normal text-base-400">(relative)</span>
-						</label>
-						<input
-							type="text"
-							name="log_parser_script"
-							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
-							placeholder="scripts/parse_logs.py"
-						/>
-					</div>
-					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
-						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
-							Viz script <span class="normal-case font-normal text-base-400">(relative)</span>
-						</label>
-						<input
-							type="text"
-							name="viz_script"
-							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
-							placeholder="scripts/plot_results.py"
-						/>
-					</div>
+				<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+					<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+						Output files to watch <span class="normal-case font-normal text-base-400">(one per line, relative to output path)</span>
+					</label>
+					<textarea
+						name="output_files"
+						rows="3"
+						class="bg-transparent text-sm font-mono focus:outline-none resize-y placeholder:text-base-400"
+						placeholder={ "checkpoint.pt\nmetrics.csv" }
+					></textarea>
 				</div>
 				<div class="flex">
 					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
@@ -112,9 +101,22 @@ templ newBatchForm(p *internal.Project) {
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Preferred GPU</label>
 						<select name="preferred_gpu" class="bg-transparent text-sm focus:outline-none">
 							<option value="">Any</option>
+							<option value="RTX A4500">RTX A4500</option>
+							<option value="RTX 4090">RTX 4090</option>
+							<option value="RTX 4080">RTX 4080</option>
+							<option value="RTX 4070 Ti">RTX 4070 Ti</option>
+							<option value="RTX 4070">RTX 4070</option>
+							<option value="RTX 4060 Ti">RTX 4060 Ti</option>
+							<option value="RTX 4060">RTX 4060</option>
 							<option value="RTX 4050">RTX 4050</option>
+							<option value="RTX 3090">RTX 3090</option>
 							<option value="RTX 3080">RTX 3080</option>
+							<option value="RTX 3070">RTX 3070</option>
+							<option value="RTX 3060">RTX 3060</option>
+							<option value="RTX 2080 Ti">RTX 2080 Ti</option>
 							<option value="RTX 2080">RTX 2080</option>
+							<option value="RTX 2070">RTX 2070</option>
+							<option value="RTX 2060">RTX 2060</option>
 						</select>
 					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 w-32">
@@ -142,7 +144,7 @@ templ newBatchForm(p *internal.Project) {
 						rows="2"
 						required
 						class="bg-transparent text-sm font-mono focus:outline-none resize-y placeholder:text-base-400"
-						placeholder="uv run python train.py --algo rlpd --gamma 0.99"
+						placeholder="python -m tools.train --algo rlpd --gamma 0.99"
 					></textarea>
 				</div>
 				<div class="px-4 py-3 border-b border-base-300">
@@ -158,36 +160,18 @@ templ newBatchForm(p *internal.Project) {
 						<p class="text-sm text-base-400 py-2">No axes yet — jobs will be created from the base command alone.</p>
 					</div>
 				</div>
-				<div class="flex border-b border-base-300">
+				<div class="flex">
 					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-r border-base-300">
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Seed flag</label>
-						<input
-							type="text"
-							id="seed_flag"
-							name="seed_flag"
-							value="--seed"
-							class="bg-transparent text-sm font-mono focus:outline-none"
-						/>
+						<input type="text" id="seed_flag" name="seed_flag" value="--seed" class="bg-transparent text-sm font-mono focus:outline-none"/>
 					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 w-32 border-r border-base-300">
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Num seeds</label>
-						<input
-							type="number"
-							id="num_seeds"
-							name="num_seeds"
-							value="3"
-							min="1"
-							class="bg-transparent text-sm font-mono focus:outline-none"
-						/>
+						<input type="number" id="num_seeds" name="num_seeds" value="3" min="1" class="bg-transparent text-sm font-mono focus:outline-none"/>
 					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Retry suffix</label>
-						<input
-							type="text"
-							name="retry_suffix"
-							value="--resume"
-							class="bg-transparent text-sm font-mono focus:outline-none"
-						/>
+						<input type="text" name="retry_suffix" value="--resume" class="bg-transparent text-sm font-mono focus:outline-none"/>
 					</div>
 				</div>
 			</div>
@@ -195,8 +179,16 @@ templ newBatchForm(p *internal.Project) {
 		<!-- Preview -->
 		<div class="border border-base-300 rounded-md overflow-hidden">
 			<div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-50">
-				<span class="text-sm font-semibold">Preview</span>
-				<span id="preview_count" class="text-sm font-mono text-base-500">3 jobs</span>
+				<div class="flex items-center gap-3">
+					<span class="text-sm font-semibold">Preview</span>
+					<span id="preview_count" class="text-sm font-mono text-base-500"></span>
+				</div>
+				<button
+					type="button"
+					id="preview_toggle"
+					onclick="togglePreview()"
+					class="text-xs px-3 py-1.5 border border-base-300 rounded hover:bg-base-100 font-medium"
+				>Show all</button>
 			</div>
 			<div id="preview_commands" class="px-4 py-3 space-y-1.5 font-mono text-xs text-base-600 leading-relaxed"></div>
 		</div>
@@ -209,122 +201,16 @@ templ newBatchForm(p *internal.Project) {
 			</button>
 		</div>
 	</form>
-	<script>
-	(function () {
-	  let nextIdx = 0;
-
-	  function esc(s) {
-	    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-	  }
-
-	  function getAxes() {
-	    const axes = [];
-	    document.querySelectorAll('.axis-block').forEach(function(block) {
-	      const idx = block.dataset.idx;
-	      const name = (document.getElementById('axis_' + idx + '_name') || {}).value || '';
-	      const raw = (document.getElementById('axis_' + idx + '_values') || {}).value || '';
-	      const values = raw.split('\n').map(v => v.trim()).filter(v => v);
-	      if (values.length > 0) axes.push({ name: name.trim(), values: values });
-	    });
-	    return axes;
-	  }
-
-	  function cartesian(axes) {
-	    if (axes.length === 0) return [[]];
-	    const [first, ...rest] = axes;
-	    const sub = cartesian(rest);
-	    return first.values.flatMap(v => sub.map(r => [v, ...r]));
-	  }
-
-	  function updatePreview() {
-	    const base = (document.getElementById('base_command') || {}).value || '';
-	    const seedFlag = (document.getElementById('seed_flag') || {}).value || '--seed';
-	    const numSeeds = parseInt((document.getElementById('num_seeds') || {}).value) || 1;
-	    const axes = getAxes();
-	    const combos = cartesian(axes);
-	    const total = combos.length * numSeeds;
-
-	    const countEl = document.getElementById('preview_count');
-	    if (countEl) countEl.textContent = total + ' job' + (total !== 1 ? 's' : '');
-
-	    const lines = [];
-	    outer: for (const combo of combos) {
-	      for (let s = 1; s <= numSeeds; s++) {
-	        if (lines.length >= 3) break outer;
-	        const cmd = [base, ...combo, seedFlag, s].filter(p => p !== '').join(' ');
-	        lines.push('<div class="truncate">' + esc(cmd) + '</div>');
-	      }
-	    }
-	    if (total > 3) lines.push('<div class="text-base-400">… and ' + (total - 3) + ' more</div>');
-
-	    const el = document.getElementById('preview_commands');
-	    if (el) el.innerHTML = lines.join('') || '<div class="text-base-400">Enter a base command to preview.</div>';
-
-	    // serialize axes for form submission
-	    const hidden = document.getElementById('axes_json');
-	    if (hidden) hidden.value = JSON.stringify(getAxes());
-	  }
-
-	  window.addAxis = function () {
-	    const container = document.getElementById('axes_container');
-	    // remove placeholder text if present
-	    const placeholder = container.querySelector('p');
-	    if (placeholder) placeholder.remove();
-
-	    const idx = nextIdx++;
-	    const div = document.createElement('div');
-	    div.className = 'axis-block border border-base-300 rounded-md overflow-hidden';
-	    div.dataset.idx = idx;
-	    div.innerHTML =
-	      '<div class="flex items-center gap-2 px-3 py-2 bg-base-50 border-b border-base-300">' +
-	        '<input id="axis_' + idx + '_name" type="text" placeholder="Axis name (e.g. env)" ' +
-	          'class="bg-transparent text-sm font-semibold focus:outline-none flex-1 placeholder:font-normal placeholder:text-base-400" />' +
-	        '<button type="button" onclick="removeAxis(this)" class="text-xs text-red-400 hover:text-red-600 shrink-0">Remove</button>' +
-	      '</div>' +
-	      '<textarea id="axis_' + idx + '_values" rows="3" ' +
-	        'placeholder="--env antmaze-large-play-v2\n--env antmaze-large-diverse-v2" ' +
-	        'class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>';
-
-	    div.querySelector('input').addEventListener('input', updatePreview);
-	    div.querySelector('textarea').addEventListener('input', updatePreview);
-	    container.appendChild(div);
-	    updatePreview();
-	  };
-
-	  window.removeAxis = function (btn) {
-	    btn.closest('.axis-block').remove();
-	    const container = document.getElementById('axes_container');
-	    if (container.querySelectorAll('.axis-block').length === 0) {
-	      const p = document.createElement('p');
-	      p.className = 'text-sm text-base-400 py-2';
-	      p.textContent = 'No axes yet — jobs will be created from the base command alone.';
-	      container.appendChild(p);
-	    }
-	    updatePreview();
-	  };
-
-	  ['base_command', 'seed_flag', 'num_seeds'].forEach(function(id) {
-	    const el = document.getElementById(id);
-	    if (el) el.addEventListener('input', updatePreview);
-	  });
-
-	  // keep axes_json in sync before submit (belt and suspenders)
-	  document.getElementById('batch-form').addEventListener('submit', function() {
-	    document.getElementById('axes_json').value = JSON.stringify(getAxes());
-	  });
-
-	  updatePreview();
-	})();
-	</script>
 }
 
-templ JobDetailPage(p *internal.Project, job *internal.Job) {
+templ JobDetailPage(p *internal.Project, job *internal.Job, stdoutLog string, stderrLog string) {
 	@Base() {
 		@Header() {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
 		}
-		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
+		<div class="max-w-5xl mx-auto w-full px-8 mt-4" data-job-id={ job.ID }>
 			<div class="mb-6">
 				<div class="flex items-center gap-2 text-sm text-base-400 mb-1">
 					<a href="/" class="hover:text-base-700">Projects</a>
@@ -349,16 +235,22 @@ templ JobDetailPage(p *internal.Project, job *internal.Job) {
 				<div class="grid grid-cols-2 divide-x divide-base-300">
 					<div class="grid grid-cols-2 divide-y divide-base-300">
 						@infoCell("Machine", func() string {
-							if job.Machine != "" { return job.Machine }
+							if job.Machine != "" {
+								return job.Machine
+							}
 							return "—"
 						}(), true)
 						@infoCell("Retries", fmt.Sprintf("%d / %d", job.RetryCount, job.MaxRetries), true)
 						@infoCell("Started", func() string {
-							if job.StartedAt != nil { return job.StartedAt.Format("Jan 02, 15:04:05") }
+							if job.StartedAt != nil {
+								return job.StartedAt.Format("Jan 02, 15:04:05")
+							}
 							return "—"
 						}(), false)
 						@infoCell("Finished", func() string {
-							if job.FinishedAt != nil { return job.FinishedAt.Format("Jan 02, 15:04:05") }
+							if job.FinishedAt != nil {
+								return job.FinishedAt.Format("Jan 02, 15:04:05")
+							}
 							return "—"
 						}(), false)
 					</div>
@@ -377,36 +269,42 @@ templ JobDetailPage(p *internal.Project, job *internal.Job) {
 				</div>
 			</div>
 			<!-- Progress -->
-			if job.Progress != nil {
-				<div class="border border-base-300 rounded-md px-4 py-4">
-					<div class="flex items-center justify-between mb-2">
-						<span class="text-sm font-semibold">Progress</span>
-						<span class="text-sm text-base-500">{ job.Progress.Label }</span>
-					</div>
-					<div class="w-full bg-base-200 rounded-full h-2">
-						<div
-							class="bg-accent-500 h-2 rounded-full transition-all"
-							style={ fmt.Sprintf("width: %.2f%%", job.Progress.Percent) }
-						></div>
-					</div>
-					<div class="flex justify-between mt-1.5 text-xs text-base-400">
-						<span>{ fmt.Sprintf("Step %d", job.Progress.CurrentStep) }</span>
-						<span>{ fmt.Sprintf("%.1f%%", job.Progress.Percent) }</span>
-						<span>{ fmt.Sprintf("/ %d", job.Progress.TotalSteps) }</span>
-					</div>
-				</div>
-			}
+			<div id={ "job-progress-" + job.ID } class="border border-base-300 rounded-md px-4 py-4 space-y-3">
+				@jobProgressContent(job)
+			</div>
 			<!-- Console -->
 			<div class="border border-base-300 rounded-md overflow-hidden">
-				<div class="flex items-center justify-between px-4 py-3 border-b border-base-300 bg-base-50">
-					<span class="text-sm font-semibold">Console</span>
-					<span class="text-xs text-base-400">stdout</span>
+				<div class="flex items-center justify-between px-4 py-2 border-b border-base-300 bg-base-50">
+					<div class="flex gap-1">
+						<button id="tab-stdout" class="px-3 py-1.5 text-xs font-semibold rounded-md bg-base-200 text-base-700">stdout</button>
+						<button id="tab-stderr" class="px-3 py-1.5 text-xs font-semibold rounded-md text-base-400 hover:text-base-600">stderr</button>
+						<a
+							id="btn-raw"
+							href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + job.ID + "/logs/stdout") }
+							target="_blank"
+							class="px-3 py-1.5 text-xs font-semibold rounded-md text-base-400 hover:text-base-600"
+						>raw</a>
+					</div>
+					<span class="text-xs text-base-400">synced every 2 min · last 200 lines</span>
 				</div>
-				<div class="bg-base-950 text-base-100 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto" id="console-output">
-					if job.Status == internal.JobPending {
-						<span class="text-base-500">Waiting for scheduler to dispatch this job…</span>
+				<div class="bg-base-950 text-base-500 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto" id={ "console-stdout-" + job.ID }>
+					if stdoutLog != "" {
+						for _, line := range consoleLines(stdoutLog) {
+							<div>{ line }</div>
+						}
+					} else if job.Status == internal.JobPending {
+						<span class="text-base-400">Waiting for scheduler to dispatch this job…</span>
 					} else {
-						<span class="text-base-500">Live log streaming will be available once the scheduler is connected.</span>
+						<span class="text-base-400">No output yet.</span>
+					}
+				</div>
+				<div class="bg-base-950 text-base-500 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto hidden" id={ "console-stderr-" + job.ID }>
+					if stderrLog != "" {
+						for _, line := range consoleLines(stderrLog) {
+							<div class="text-red-300">{ line }</div>
+						}
+					} else {
+						<span class="text-base-400">No stderr output.</span>
 					}
 				</div>
 			</div>
@@ -441,4 +339,39 @@ templ infoCell(label, value string, borderBottom bool) {
 		<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">{ label }</span>
 		<span class="text-sm font-mono">{ value }</span>
 	</div>
+}
+
+// formatETA convertit des secondes en string lisible : "1h 23m", "45m 12s", "8s"
+func formatETA(seconds float64) string {
+	s := int(seconds)
+	if s <= 0 {
+		return "—"
+	}
+	h := s / 3600
+	m := (s % 3600) / 60
+	sec := s % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, sec)
+	}
+	return fmt.Sprintf("%ds", sec)
+}
+
+// consoleLines retourne les 200 dernières lignes du log pour éviter
+// d'afficher des fichiers trop volumineux dans le navigateur.
+func consoleLines(log string) []string {
+	lines := strings.Split(strings.TrimRight(log, "\n"), "\n")
+	if len(lines) > 200 {
+		lines = lines[len(lines)-200:]
+	}
+	return lines
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }

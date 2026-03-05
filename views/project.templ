@@ -3,6 +3,8 @@ package views
 import (
 	"fmt"
 	"github.com/paulchambaz/ssherd/internal"
+	"path/filepath"
+	"strings"
 )
 
 templ ProjectPage(data internal.ProjectPageData) {
@@ -10,6 +12,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 		@Header() {
 			<a href="/">Projects</a>
 			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
 		}
 		<div class="max-w-5xl mx-auto w-full px-8 mt-4">
 			<div class="mb-6">
@@ -32,7 +35,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 				case internal.TabVisualizations:
 					@projectVisualizations(data.Project, data.Visualizations)
 				case internal.TabFiles:
-					@projectFiles(data.Project)
+					@projectFiles(data.Project, data.RepoFiles, data.RepoSubPath)
 				case internal.TabSettings:
 					@projectSettings(data.Project)
 			}
@@ -85,9 +88,6 @@ templ projectDashboard(p *internal.Project, jobs []*internal.Job) {
 				<div class="px-4 py-10 text-center text-base-400 text-sm">No jobs yet</div>
 			} else {
 				for i, j := range jobs {
-					if i >= 5 {
-						break
-					}
 					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class={ "flex items-center justify-between px-4 py-2.5 hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }>
 						<span class="text-sm truncate max-w-[200px]">{ j.DisplayName }</span>
 						<span class={ "text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2", j.Status.BadgeClass() }>{ j.Status.Label() }</span>
@@ -123,66 +123,26 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 		</a>
 	</div>
 	<div class="border border-base-300 rounded-md overflow-hidden">
+		<!-- En-tête -->
+		<div class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] px-4 py-2.5 text-xs text-base-500 uppercase tracking-wide font-semibold border-b border-base-300 bg-base-50">
+			<span>Name</span>
+			<span>Status</span>
+			<span>Machine</span>
+			<span>Progress</span>
+			<span>Created</span>
+			<span></span>
+		</div>
 		if len(jobs) == 0 {
 			<div class="px-6 py-12 text-center text-base-400 text-sm">
 				No jobs yet. Create a batch to get started.
 			</div>
 		} else {
-			<table class="w-full text-sm">
-				<thead>
-					<tr class="border-b border-base-300 text-xs text-base-500 uppercase tracking-wide">
-						<th class="text-left px-4 py-2.5 font-semibold">Name</th>
-						<th class="text-left px-4 py-2.5 font-semibold">Status</th>
-						<th class="text-left px-4 py-2.5 font-semibold">Machine</th>
-						<th class="text-left px-4 py-2.5 font-semibold">Progress</th>
-						<th class="text-left px-4 py-2.5 font-semibold">Created</th>
-						<th class="px-4 py-2.5"></th>
-					</tr>
-				</thead>
-				<tbody>
-					for i, j := range jobs {
-						<tr class={ "hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }>
-							<td class="px-4 py-3 max-w-[260px]">
-								<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class="font-medium hover:text-accent-600 truncate block">
-									{ j.DisplayName }
-								</a>
-							</td>
-							<td class="px-4 py-3">
-								<span class={ "text-xs px-2 py-0.5 rounded-full font-medium", j.Status.BadgeClass() }>
-									{ j.Status.Label() }
-								</span>
-							</td>
-							<td class="px-4 py-3 font-mono text-xs text-base-500">
-								if j.Machine != "" {
-									{ j.Machine }
-								} else {
-									<span class="text-base-300">—</span>
-								}
-							</td>
-							<td class="px-4 py-3 w-40">
-								if j.Progress != nil {
-									<div class="flex items-center gap-2">
-										<div class="flex-1 bg-base-200 rounded-full h-1.5">
-											<div class="bg-accent-500 h-1.5 rounded-full" style={ fmt.Sprintf("width:%.0f%%", j.Progress.Percent) }></div>
-										</div>
-										<span class="text-xs text-base-400 shrink-0">{ fmt.Sprintf("%.0f%%", j.Progress.Percent) }</span>
-									</div>
-								} else {
-									<span class="text-base-300 text-xs">—</span>
-								}
-							</td>
-							<td class="px-4 py-3 text-xs text-base-400 whitespace-nowrap">
-								{ j.CreatedAt.Format("Jan 02, 15:04") }
-							</td>
-							<td class="px-4 py-3 text-right">
-								<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class="text-xs text-accent-500 hover:underline">
-									View →
-								</a>
-							</td>
-						</tr>
-					}
-				</tbody>
-			</table>
+			for _, j := range jobs {
+				<!-- id="job-row-{id}" permet les OOB swaps WebSocket -->
+				<div id={ "job-row-" + j.ID } class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+					@jobRowCells(j)
+				</div>
+			}
 		}
 	</div>
 }
@@ -210,7 +170,7 @@ templ projectVisualizations(p *internal.Project, vizs []*internal.Visualization)
 				>
 					<div class="flex flex-col gap-0.5 min-w-0">
 						<span class="font-medium text-sm">{ v.Name }</span>
-						<span class="text-xs text-base-400 font-mono">{ v.VizScript }</span>
+						<span class="text-xs text-base-400 font-mono">{ v.VizCommand }</span>
 					</div>
 					<div class="flex items-center gap-4 shrink-0 ml-4">
 						<span class="text-xs text-base-400">{ fmt.Sprintf("%d SVG%s", v.SVGCount(), func() string { if v.SVGCount() != 1 { return "s" }; return "" }()) }</span>
@@ -222,16 +182,90 @@ templ projectVisualizations(p *internal.Project, vizs []*internal.Visualization)
 	</div>
 }
 
-templ projectFiles(p *internal.Project) {
+templ projectFiles(p *internal.Project, files []internal.RepoFile, subPath string) {
+	{{ parentPath, breadcrumbs := fileBreadcrumbs(subPath) }}
 	<div class="flex items-center justify-between mb-4">
-		<h2 class="text-base font-semibold">Files</h2>
-		<button disabled class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md opacity-50 cursor-not-allowed">
-			Sync now
-		</button>
+		<div class="flex items-center gap-2 text-sm text-base-400">
+			<a href={ templ.SafeURL("/projects/" + p.Slug + "/files") } class="hover:text-base-700">repo</a>
+			for _, crumb := range breadcrumbs {
+				<span>/</span>
+				<a href={ templ.SafeURL("/projects/" + p.Slug + "/files?path=" + crumb.Path) } class="hover:text-base-700">{ crumb.Name }</a>
+			}
+		</div>
+		<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/files/sync") }>
+			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				Sync now
+			</button>
+		</form>
 	</div>
-	<div class="border border-base-300 rounded-md overflow-hidden">
-		<div class="px-6 py-12 text-center text-base-400 text-sm">No local files yet. Sync from the cluster to get started.</div>
+	<div class="border border-base-300 rounded-md overflow-hidden font-mono text-sm">
+		if len(files) == 0 && subPath == "" {
+			<div class="px-6 py-12 text-center text-base-400 text-sm font-sans">
+				No files yet. Click Sync to pull the latest repo state.
+			</div>
+		} else {
+			if subPath != "" {
+				<a
+					href={ templ.SafeURL("/projects/" + p.Slug + "/files" + func() string {
+						if parentPath != "" { return "?path=" + parentPath }
+						return ""
+					}()) }
+					class="flex items-center gap-3 px-4 py-2 border-b border-base-300 hover:bg-base-50 text-base-400 hover:text-base-700"
+				>
+					<span class="text-xs w-3 shrink-0">▲</span>
+					<span>..</span>
+				</a>
+			}
+			for i, f := range files {
+				<div class={ templ.KV("border-t border-base-300", i > 0 || subPath != "") }>
+					if f.IsDir {
+						<a
+							href={ templ.SafeURL("/projects/" + p.Slug + "/files?path=" + f.RelPath) }
+							class="flex items-center justify-between px-4 py-2 hover:bg-base-50 group"
+						>
+							<div class="flex items-center gap-3 min-w-0">
+								<span class="text-xs text-base-400 group-hover:text-base-600 w-3 shrink-0">▶</span>
+								<span class="font-semibold text-base-700 group-hover:text-accent-600 truncate">{ filepath.Base(f.RelPath) }</span>
+							</div>
+						</a>
+					} else {
+						<a
+							href={ templ.SafeURL("/projects/" + p.Slug + "/files/download?path=" + f.RelPath) }
+							class="flex items-center justify-between px-4 py-2 hover:bg-base-50 group"
+						>
+							<div class="flex items-center gap-3 min-w-0">
+								<span class="text-xs text-base-300 group-hover:text-base-500 w-3 shrink-0">·</span>
+								<span class="text-base-600 group-hover:text-accent-600 truncate">{ filepath.Base(f.RelPath) }</span>
+							</div>
+							<span class="text-xs text-base-400 shrink-0 ml-4">{ formatFileSize(f.Size) }</span>
+						</a>
+					}
+				</div>
+			}
+		}
 	</div>
+}
+
+type breadcrumb struct {
+	Name string
+	Path string
+}
+
+func fileBreadcrumbs(subPath string) (parentPath string, crumbs []breadcrumb) {
+	if subPath == "" {
+		return "", nil
+	}
+	parts := strings.Split(subPath, string(filepath.Separator))
+	for i, part := range parts {
+		crumbs = append(crumbs, breadcrumb{
+			Name: part,
+			Path: strings.Join(parts[:i+1], string(filepath.Separator)),
+		})
+	}
+	if len(parts) > 1 {
+		parentPath = strings.Join(parts[:len(parts)-1], string(filepath.Separator))
+	}
+	return parentPath, crumbs
 }
 
 templ projectSettings(p *internal.Project) {

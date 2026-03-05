@@ -1,0 +1,112 @@
+package views
+
+import (
+	"fmt"
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+templ SettingsPage(cfg internal.SchedulerConfig) {
+	@Base() {
+		@Header() {
+			<a href="/">Projects</a>
+			<a href="/machines">Machines</a>
+			<a href="/settings">Settings</a>
+		}
+		<main class="flex-1 p-8 max-w-2xl mx-auto w-full mt-4">
+			<h2 class="text-xl font-semibold mb-1">Scheduler settings</h2>
+			<p class="text-sm text-base-500 mb-6 pb-6 border-b border-base-300">
+				Changes take effect at the next dispatch or monitor tick, without restarting the daemon.
+			</p>
+			<form method="POST" action="/settings" class="flex flex-col gap-4">
+				<div class="border border-base-300 rounded-md overflow-hidden">
+					<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Use ratio <span class="normal-case font-normal text-base-400">(1 – 100%, percentage of machines to use simultaneously)</span>
+						</label>
+						<input
+							type="number"
+							name="use_ratio"
+							value={ fmt.Sprintf("%.0f", cfg.UseRatio*100) }
+							min="1"
+							max="100"
+							step="1"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Dispatch interval <span class="normal-case font-normal text-base-400">(e.g. 60s, 2m)</span>
+						</label>
+						<input
+							type="text"
+							name="dispatch_interval"
+							value={ cfg.DispatchInterval.String() }
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 border-b border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Monitor interval <span class="normal-case font-normal text-base-400">(e.g. 2m, 5m)</span>
+						</label>
+						<input
+							type="text"
+							name="monitor_interval"
+							value={ cfg.MonitorInterval.String() }
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Stall timeout <span class="normal-case font-normal text-base-400">(e.g. 10m, 30m)</span>
+						</label>
+						<input
+							type="text"
+							name="stall_timeout"
+							value={ cfg.StallTimeout.String() }
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Sync interval <span class="normal-case font-normal text-base-400">(e.g. 30m, 1h)</span>
+						</label>
+						<input
+							type="text"
+							name="sync_interval"
+							value={ cfg.SyncInterval.String() }
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 border-t border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Viz interval <span class="normal-case font-normal text-base-400">(e.g. 10m, 30m)</span>
+						</label>
+						<input
+							type="text"
+							name="viz_interval"
+							value={ cfg.VizInterval.String() }
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 border-t border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+							Local prefix <span class="normal-case font-normal text-base-400">(prepended to every local command)</span>
+						</label>
+						<input
+							type="text"
+							name="local_prefix"
+							value={ cfg.LocalPrefix }
+							class="bg-transparent text-sm font-mono focus:outline-none placeholder:text-base-400"
+							placeholder="uv run"
+						/>
+					</div>
+				</div>
+				<div class="flex justify-end">
+					<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+						Save settings
+					</button>
+				</div>
+			</form>
+		</main>
+	}
+}

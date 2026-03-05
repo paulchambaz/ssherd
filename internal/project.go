@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -18,6 +19,14 @@ type Project struct {
 	GitToken   string    `json:"git_token"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type RepoFile struct {
+	Path    string
+	RelPath string
+	Size    int64
+	ModTime time.Time
+	IsDir   bool
 }
 
 func LoadProjects(cachePath string) ([]*Project, error) {
@@ -71,6 +80,62 @@ func DeleteProject(cachePath, id string) error {
 		return fmt.Errorf("cannot delete project directory: %w", err)
 	}
 	return nil
+}
+
+func WalkRepoFiles(repoDir string) ([]RepoFile, error) {
+	var files []RepoFile
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		return nil, nil
+	}
+	err := filepath.WalkDir(repoDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip erreurs individuelles
+		}
+		rel, _ := filepath.Rel(repoDir, path)
+		if rel == "." {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		files = append(files, RepoFile{
+			Path:    path,
+			RelPath: rel,
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+			IsDir:   d.IsDir(),
+		})
+		return nil
+	})
+	return files, err
+}
+
+func ListRepoDir(repoDir, subPath string) ([]RepoFile, error) {
+	target := filepath.Join(repoDir, subPath)
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read dir: %w", err)
+	}
+	var files []RepoFile
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		rel := filepath.Join(subPath, entry.Name())
+		files = append(files, RepoFile{
+			Path:    filepath.Join(target, entry.Name()),
+			RelPath: rel,
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+			IsDir:   entry.IsDir(),
+		})
+	}
+	return files, nil
 }
 
 func projectDir(cachePath, slug string) string {

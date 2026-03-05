@@ -12,11 +12,11 @@ templ Base() {
 			<script src="/static/js/htmx-ws.min.js"></script>
 			<meta name="robots" content="noindex, nofollow"/>
 		</head>
-		<body class="bg-base-100">
+		<body class="bg-base-100" hx-ext="ws" ws-connect="/ws">
 			<div class="text-base-900 flex flex-col min-h-screen">
 				{ children... }
 			</div>
 		</body>
-    <script src="/static/js/main.js"></script>
+		<script src="/static/js/main.js"></script>
 	</html>
 }

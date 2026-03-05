@@ -1,0 +1,154 @@
+package views
+
+import (
+	"fmt"
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+// JobRowFragment est envoyé via WebSocket pour mettre à jour une ligne de la
+// liste des jobs. hx-swap-oob="true" demande à htmx de cibler l'élément
+// existant par son id et de le remplacer par outerHTML.
+// Les clients qui ne sont pas sur la page /jobs ignorent ce swap silencieusement.
+templ JobRowFragment(job *internal.Job) {
+	<div id={ "job-row-" + job.ID } hx-swap-oob="true" class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+		@jobRowCells(job)
+	</div>
+}
+
+// JobProgressFragment met à jour la section progression sur la page de détail
+// d'un job. Les clients sur d'autres pages ignorent ce swap.
+templ JobProgressFragment(job *internal.Job) {
+	<div id={ "job-progress-" + job.ID } hx-swap-oob="true" class="border border-base-300 rounded-md px-4 py-4 space-y-3">
+		@jobProgressContent(job)
+	</div>
+}
+
+// jobRowCells est partagé entre la liste des jobs et JobRowFragment.
+// job.ProjectSlug est utilisé pour construire l'URL sans avoir à passer le projet.
+templ jobRowCells(job *internal.Job) {
+	<div class="min-w-0 pr-2" title={ job.DisplayName }>
+		<a href={ templ.SafeURL("/projects/" + job.ProjectSlug + "/jobs/" + job.ID) } class="font-medium hover:text-accent-600 truncate block">
+			{ job.DisplayName }
+		</a>
+	</div>
+	<div>
+		<span class={ "text-xs px-2 py-0.5 rounded-full font-medium", job.Status.BadgeClass() }>
+			{ job.Status.Label() }
+		</span>
+	</div>
+	<div class="font-mono text-xs text-base-500 truncate">
+		if job.Machine != "" {
+			{ job.Machine }
+		} else {
+			<span class="text-base-300">—</span>
+		}
+	</div>
+	<div>
+		@inlineProgressBar(job)
+	</div>
+	<div class="text-xs text-base-400 whitespace-nowrap">
+		{ job.CreatedAt.Format("Jan 02, 15:04") }
+	</div>
+}
+
+// inlineProgressBar est la mini progress bar dans la liste des jobs.
+templ inlineProgressBar(job *internal.Job) {
+	if job.Status == internal.JobDone {
+		<div class="flex items-center gap-2 w-32">
+			<div class="flex-1 bg-base-200 rounded-full h-1.5">
+				<div class="bg-blue-500 h-1.5 rounded-full" style="width:100%"></div>
+			</div>
+			<span class="text-xs text-base-400 shrink-0">100%</span>
+		</div>
+	} else if job.Progress != nil {
+		<div class="flex items-center gap-2 w-32">
+			<div class="flex-1 bg-base-200 rounded-full h-1.5">
+				<div class="bg-accent-500 h-1.5 rounded-full" style={ fmt.Sprintf("width:%.0f%%", clampPercent(job.Progress.Percent)) }></div>
+			</div>
+			<span class="text-xs text-base-400 shrink-0">{ fmt.Sprintf("%.0f%%", job.Progress.Percent) }</span>
+		</div>
+	} else {
+		<span class="text-base-300 text-xs">—</span>
+	}
+}
+
+// jobProgressContent est le corps de la section progression, partagé entre la
+// page de détail et JobProgressFragment.
+templ jobProgressContent(job *internal.Job) {
+	if job.Progress != nil || job.Status == internal.JobDone {
+		{{
+			percent := float64(0)
+			currentStep := 0
+			totalSteps := 0
+			etaStr := "—"
+			elapsedStr := "—"
+
+			if job.Progress != nil {
+				percent = job.Progress.Percent
+				currentStep = job.Progress.CurrentStep
+				totalSteps = job.Progress.TotalSteps
+				etaStr = formatETA(job.Progress.ETASeconds)
+				elapsedStr = formatETA(job.Progress.CurrentTime.Sub(job.Progress.StartTime).Seconds())
+			}
+
+			if job.Status == internal.JobDone {
+				percent = 100
+				currentStep = totalSteps
+				etaStr = "0s"
+				if job.StartedAt != nil && job.FinishedAt != nil {
+					elapsedStr = formatETA(job.FinishedAt.Sub(*job.StartedAt).Seconds())
+				}
+			}
+		}}
+		<div class="flex items-center justify-between mb-3">
+			<span class="text-sm font-semibold">Progress</span>
+			<span class="text-sm font-mono text-base-500">
+				{ fmt.Sprintf("step %d / %d", currentStep, totalSteps) }
+			</span>
+		</div>
+		<div class="w-full bg-base-200 rounded-full h-2">
+			<div
+				class={ "h-2 rounded-full transition-all bg-accent-500" }
+				style={ fmt.Sprintf("width: %.2f%%", clampPercent(percent)) }
+			></div>
+		</div>
+		<div class="flex justify-between text-xs text-base-400 mt-2">
+			<span>{ fmt.Sprintf("%.1f%%", percent) }</span>
+			if job.Status != internal.JobDone {
+				<span>ETA { etaStr }</span>
+			}
+			<span>elapsed { elapsedStr }</span>
+		</div>
+	}
+}
+
+templ JobLogsFragment(job *internal.Job, stdoutLog, stderrLog string) {
+	<div id={ "console-stdout-" + job.ID } hx-swap-oob="true" class="bg-base-950 text-base-500 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto">
+		if stdoutLog != "" {
+			for _, line := range consoleLines(stdoutLog) {
+				<div>{ line }</div>
+			}
+		} else {
+			<span class="text-base-400">No output yet.</span>
+		}
+	</div>
+	<div id={ "console-stderr-" + job.ID } hx-swap-oob="true" class="bg-base-950 text-base-500 font-mono text-xs px-4 py-4 min-h-[200px] max-h-[400px] overflow-y-auto hidden">
+		if stderrLog != "" {
+			for _, line := range consoleLines(stderrLog) {
+				<div class="text-red-300">{ line }</div>
+			}
+		} else {
+			<span class="text-base-400">No stderr output.</span>
+		}
+	</div>
+}
+
+func clampPercent(p float64) float64 {
+	if p > 100 {
+		return 100
+	}
+	if p < 0 {
+		return 0
+	}
+	return p
+}
