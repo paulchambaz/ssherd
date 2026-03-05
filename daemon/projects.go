@@ -142,10 +142,11 @@ func (s *Server) postSyncFiles(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.scheduler.SyncRepoNow(p.ID); err != nil {
-		http.Error(w, "Sync failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	go func() {
+		if err := s.scheduler.SyncRepoNow(p.ID); err != nil {
+			log.Printf("sync: %v", err)
+		}
+	}()
 	http.Redirect(w, r, "/projects/"+p.Slug+"/files", http.StatusSeeOther)
 }
 

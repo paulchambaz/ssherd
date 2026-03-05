@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io/fs"
 	"log"
@@ -199,17 +198,33 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 }
 
 func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, combo VizCombo, localRepoDir string) error {
-	watcher, err := s.ensureWatcher()
+	machine, proxy, err := s.findMachineForRsync()
 	if err != nil {
-		return fmt.Errorf("no watcher: %w", err)
+		return fmt.Errorf("no machine available for remote viz: %w", err)
 	}
 
-	// Pull latest before running
-	if err := watcher.GitPull(project); err != nil {
+	log.Printf("viz: generateVizRemote: connecting to %s for %s combo=%s", machine.Name, viz.Name, combo.Key)
+	client, err := Connect(SSHConfig{
+		GatewayHost:     proxy.Hostname,
+		GatewayPort:     proxy.Port,
+		GatewayUser:     proxy.User,
+		GatewayPassword: proxy.Password,
+		TargetHost:      machine.Hostname,
+		TargetPort:      22,
+		TargetUser:      machine.User,
+		TargetPassword:  proxy.Password,
+		ConnectTimeout:  30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", machine.Name, err)
+	}
+	defer client.Close()
+
+	if err := client.GitPull(project); err != nil {
 		return fmt.Errorf("git pull before remote viz: %w", err)
 	}
 
-	present, err := checkDataOnRemote(watcher, viz.DataPath)
+	present, err := checkDataOnRemote(client, viz.DataPath)
 	if err != nil {
 		return fmt.Errorf("check remote data: %w", err)
 	}
@@ -218,7 +233,6 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 	}
 
 	resolvedCmd := buildVizCommand(viz.VizCommand, combo, viz)
-
 	var axisParts []string
 	for _, arg := range combo.Args {
 		parts := strings.Fields(arg)
@@ -226,22 +240,20 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 			axisParts = append(axisParts, shellEscape(part))
 		}
 	}
-
 	cmdStr := fmt.Sprintf("cd %s && %s %s",
 		shellEscape(project.RemotePath),
 		resolvedCmd,
 		strings.Join(axisParts, " "),
 	)
 
-	_, stderr, code, err := watcher.Run(cmdStr)
+	log.Printf("viz: generateVizRemote: running cmd on %s: %s", machine.Name, truncateCmd(cmdStr))
+	_, stderr, code, err := client.Run(cmdStr)
 	if err != nil || code != 0 {
 		return fmt.Errorf("remote viz failed (code %d)\n  cmd: %s\n  output: %s", code, cmdStr, stderr)
 	}
 
-	remoteOutputPath := filepath.Join(project.RemotePath,
-		buildVizCommand(viz.OutputFileTemplate, combo, viz))
-
-	data, err := watcher.ReadRemoteFileBinary(remoteOutputPath)
+	remoteOutputPath := filepath.Join(project.RemotePath, buildVizCommand(viz.OutputFileTemplate, combo, viz))
+	data, err := client.ReadRemoteFileBinary(remoteOutputPath)
 	if err != nil {
 		return fmt.Errorf("read remote viz output: %w", err)
 	}
@@ -254,9 +266,8 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 		return fmt.Errorf("write local viz output: %w", err)
 	}
 
-	watcher.Run(fmt.Sprintf("rm -f %s", shellEscape(remoteOutputPath)))
-
-	log.Printf("viz: generated remote %s combo %s → %s", viz.Name, combo.Key, localOutputPath)
+	client.Run(fmt.Sprintf("rm -f %s", shellEscape(remoteOutputPath)))
+	log.Printf("viz: generateVizRemote: done %s combo=%s → %s", viz.Name, combo.Key, localOutputPath)
 	return nil
 }
 
@@ -330,22 +341,6 @@ func checkDataOnRemote(client *Client, remotePath string) (bool, error) {
 		return false, err
 	}
 	return code == 0, nil
-}
-
-// ReadRemoteFileBinary lit un fichier distant en base64 pour supporter les binaires.
-func (c *Client) ReadRemoteFileBinary(remotePath string) ([]byte, error) {
-	stdout, _, code, err := c.Run(fmt.Sprintf("base64 -w0 %s 2>/dev/null", shellEscape(remotePath)))
-	if err != nil {
-		return nil, fmt.Errorf("base64 read failed: %w", err)
-	}
-	if code != 0 {
-		return nil, fmt.Errorf("file not found or not readable: %s", remotePath)
-	}
-	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(stdout))
-	if err != nil {
-		return nil, fmt.Errorf("base64 decode failed: %w", err)
-	}
-	return data, nil
 }
 
 // buildVizCommand substitue les placeholders dans la commande viz pour un combo donné.

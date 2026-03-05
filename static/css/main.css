@@ -1,4 +1,7 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+@source "../../views";
+@source "../../static/js";
 
 @theme {
   --color-base-100: var(--base-100);
@@ -110,5 +113,14 @@
     @apply inline-block size-4 bg-current;
     mask: url(/static/svg/right.svg) no-repeat center / contain;
   }
-}
 
+  .icon-users {
+    @apply inline-block size-4 bg-current;
+    mask: url(/static/svg/users.svg) no-repeat center / contain;
+  }
+
+  .icon-copy {
+    @apply inline-block size-4 bg-current;
+    mask: url(/static/svg/copy.svg) no-repeat center / contain;
+  }
+}
