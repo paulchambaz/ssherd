@@ -217,6 +217,7 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 			Protocol: proxyProtocol,
 			ProxyID:  proxyID,
 			GPUModel: gpuModel,
+			Status:   internal.MachineStatusUnknown,
 		}
 		store.Machines = append(store.Machines, m)
 	}
@@ -254,6 +255,36 @@ func (s *Server) postDeleteMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store.Machines = filtered
+
+	if err := internal.SaveMachinesStore(s.cfg.CachePath, store); err != nil {
+		http.Error(w, "Failed to save store", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/machines", http.StatusSeeOther)
+}
+
+func (s *Server) postResetMachine(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	store, err := internal.LoadMachinesStore(s.cfg.CachePath)
+	if err != nil {
+		http.Error(w, "Failed to load store", http.StatusInternalServerError)
+		return
+	}
+
+	found := false
+	for _, m := range store.Machines {
+		if m.ID == id {
+			m.Status = internal.MachineStatusUnknown
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
 
 	if err := internal.SaveMachinesStore(s.cfg.CachePath, store); err != nil {
 		http.Error(w, "Failed to save store", http.StatusInternalServerError)

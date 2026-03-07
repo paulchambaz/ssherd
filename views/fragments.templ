@@ -10,7 +10,7 @@ import (
 // existant par son id et de le remplacer par outerHTML.
 // Les clients qui ne sont pas sur la page /jobs ignorent ce swap silencieusement.
 templ JobRowFragment(job *internal.Job) {
-	<div id={ "job-row-" + job.ID } hx-swap-oob="true" class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+	<div id={ "job-row-" + job.ID } hx-swap-oob="true" class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
 		@jobRowCells(job)
 	</div>
 }

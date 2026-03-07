@@ -73,6 +73,10 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	if seedFlag == "" {
 		seedFlag = "--seed"
 	}
+	startSeed, err := strconv.Atoi(r.FormValue("start_seed"))
+	if err != nil || startSeed < 1 {
+		startSeed = 1
+	}
 	numSeeds, err := strconv.Atoi(r.FormValue("num_seeds"))
 	if err != nil || numSeeds < 1 {
 		numSeeds = 1
@@ -124,7 +128,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	for _, combo := range combos {
-		for seed := 1; seed <= numSeeds; seed++ {
+		for seed := startSeed; seed < startSeed+numSeeds; seed++ {
 			ablationParts := make([]string, 0, len(combo))
 			for _, v := range combo {
 				ablationParts = append(ablationParts, internal.Slugify(lastToken(v)))
@@ -344,4 +348,33 @@ func substituteVars(s string, vars map[string]string) string {
 		s = strings.ReplaceAll(s, "{"+k+"}", v)
 	}
 	return s
+}
+
+func (s *Server) postEditJob(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	job, err := internal.LoadJob(s.cfg.CachePath, p.ID, r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+
+	if cmd := strings.TrimSpace(r.FormValue("retry_command")); cmd != "" {
+		job.RetryCommand = cmd
+	}
+
+	if err := internal.SaveJob(s.cfg.CachePath, job); err != nil {
+		http.Error(w, "Failed to save job", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
 }

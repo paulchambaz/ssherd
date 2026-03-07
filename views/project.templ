@@ -44,7 +44,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 }
 
 templ projectTabs(p *internal.Project, active internal.ProjectTab) {
-	<nav class="flex border-b border-base-300">
+	<nav class="flex border-b border-base-300 overflow-x-auto">
 		@projectTabLink("/projects/"+p.Slug, "Dashboard", active == internal.TabDashboard)
 		@projectTabLink("/projects/"+p.Slug+"/jobs", "Jobs", active == internal.TabJobs)
 		@projectTabLink("/projects/"+p.Slug+"/visualizations", "Visualizations", active == internal.TabVisualizations)
@@ -71,7 +71,7 @@ templ projectDashboard(p *internal.Project, jobs []*internal.Job, vizs []*intern
 		@statCard("Completed", fmt.Sprintf("%d", done), "done")
 		@statCard("Failed", fmt.Sprintf("%d", failed), "failed")
 	</div>
-	<div class="grid grid-cols-2 gap-6">
+	<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 		<div class="border border-base-300 rounded-md overflow-hidden">
 			<div class="px-4 py-3 border-b border-base-300 flex items-center justify-between">
 				<span class="text-sm font-semibold">Latest visualization</span>
@@ -133,9 +133,9 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 			New batch
 		</a>
 	</div>
-	<div class="border border-base-300 rounded-md overflow-hidden">
+	<div class="border border-base-300 rounded-md overflow-x-auto">
 		<!-- En-tête -->
-		<div class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] px-4 py-2.5 text-xs text-base-500 uppercase tracking-wide font-semibold border-b border-base-300 bg-base-50">
+		<div class="hidden md:grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] px-4 py-2.5 text-xs text-base-500 uppercase tracking-wide font-semibold border-b border-base-300 bg-base-50">
 			<span>Name</span>
 			<span>Status</span>
 			<span>Machine</span>
@@ -149,8 +149,7 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 			</div>
 		} else {
 			for _, j := range jobs {
-				<!-- id="job-row-{id}" permet les OOB swaps WebSocket -->
-				<div id={ "job-row-" + j.ID } class="grid grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+				<div id={ "job-row-" + j.ID } class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
 					@jobRowCells(j)
 				</div>
 			}
@@ -168,7 +167,7 @@ templ projectVisualizations(p *internal.Project, vizs []*internal.Visualization)
 			New visualization
 		</a>
 	</div>
-	<div class="border border-base-300 rounded-md overflow-hidden">
+	<div class="border border-base-300 rounded-md overflow-x-auto">
 		if len(vizs) == 0 {
 			<div class="px-6 py-12 text-center text-base-400 text-sm">
 				No visualizations configured yet.

@@ -153,6 +153,10 @@ templ newBatchForm(p *internal.Project, gpuModels []string) {
 						<input type="text" id="seed_flag" name="seed_flag" value="--seed" class="bg-transparent text-sm font-mono focus:outline-none"/>
 					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 w-32 border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Start seed</label>
+						<input type="number" id="start_seed" name="start_seed" value="1" min="1" class="bg-transparent text-sm font-mono focus:outline-none"/>
+					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 w-32 border-r border-base-300">
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Num seeds</label>
 						<input type="number" id="num_seeds" name="num_seeds" value="3" min="1" class="bg-transparent text-sm font-mono focus:outline-none"/>
 					</div>
@@ -257,12 +261,24 @@ templ JobDetailPage(p *internal.Project, job *internal.Job, stdoutLog string, st
 							<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Run command</span>
 							<code class="text-xs font-mono text-base-600 break-all leading-relaxed">{ job.RunCommand }</code>
 						</div>
-						if job.RetryCommand != job.RunCommand {
-							<div class="flex flex-col gap-1 px-4 py-3">
-								<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Retry command</span>
-								<code class="text-xs font-mono text-base-600 break-all leading-relaxed">{ job.RetryCommand }</code>
+						<div class="flex flex-col gap-1 px-4 py-3">
+							<span class="text-xs font-semibold text-base-500 uppercase tracking-wide">Retry command</span>
+							<div id="retry-display" class="flex items-start gap-2 group cursor-pointer" onclick="startEditRetry()">
+								<code class="text-xs font-mono text-base-600 break-all leading-relaxed flex-1">{ job.RetryCommand }</code>
+								<span class="icon-pencil !size-3.5 shrink-0 mt-0.5 text-base-300 group-hover:text-accent-400 transition-colors"></span>
 							</div>
-						}
+							<form id="retry-form" method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + job.ID + "/edit") } class="hidden items-start gap-2">
+								<input
+									id="retry-input"
+									name="retry_command"
+									type="text"
+									value={ job.RetryCommand }
+									class="flex-1 bg-transparent border-b border-accent-400 text-xs font-mono text-base-600 focus:outline-none py-0.5"
+								/>
+								<button type="submit" class="shrink-0 text-xs text-accent-500 hover:underline font-medium">Save</button>
+								<button type="button" onclick="cancelEditRetry()" class="shrink-0 text-xs text-base-400 hover:text-base-600">Cancel</button>
+							</form>
+						</div>
 					</div>
 				</div>
 			</div>

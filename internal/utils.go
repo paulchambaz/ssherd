@@ -19,7 +19,7 @@ func Slugify(name string) string {
 
 
 func GenerateID() (string, error) {
-    b := make([]byte, 8)
+    b := make([]byte, 4)
     if _, err := rand.Read(b); err != nil {
         return "", fmt.Errorf("cannot generate id: %w", err)
     }

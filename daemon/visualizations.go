@@ -221,3 +221,35 @@ func (s *Server) postDeleteVisualization(w http.ResponseWriter, r *http.Request)
 	}
 	http.Redirect(w, r, "/projects/"+p.Slug+"/visualizations", http.StatusSeeOther)
 }
+
+func (s *Server) postUpdateVisualization(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	viz, err := internal.LoadVisualization(s.cfg.CachePath, p.ID, r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+
+	if name := strings.TrimSpace(r.FormValue("name")); name != "" {
+		viz.Name = name
+	}
+	viz.Description = strings.TrimSpace(r.FormValue("description"))
+	viz.UpdatedAt = time.Now()
+
+	if err := internal.SaveVisualization(s.cfg.CachePath, viz); err != nil {
+		http.Error(w, "Failed to save visualization", http.StatusInternalServerError)
+		log.Printf("Failed to save visualization: %v", err)
+		return
+	}
+
+	http.Redirect(w, r, "/projects/"+p.Slug+"/visualizations/"+viz.ID, http.StatusSeeOther)
+}

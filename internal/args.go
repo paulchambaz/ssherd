@@ -58,7 +58,10 @@ func ParseArgs() (*Args, error) {
 func PrintUsage() {
 	fmt.Printf(`Usage: ssherd [OPTIONS]
 
-TODO
+ssherd is a job scheduler for running training jobs on remote GPU machines
+over SSH. It orchestrates parallel execution of runs on machines accessible
+via SSH, exposes a web UI, and uses a shared NFS filesystem as the source
+of truth — with no daemon deployed on the remote machines.
 
 Options:
   -c <path>   Path to config file (default: /etc/ssherd/ssherd.cfg)
@@ -69,4 +72,3 @@ For bug reporting and more information, please see:
 https://github.com/paulchambaz/ssherd
 `)
 }
-

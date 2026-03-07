@@ -81,9 +81,11 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	if d, err := time.ParseDuration(r.FormValue("viz_interval")); err == nil && d > 0 {
 		cfg.VizInterval = d
 	}
-	if v := strings.TrimSpace(r.FormValue("local_prefix")); true {
-		cfg.LocalPrefix = v
-	}
+	cfg.LocalPrefix = strings.TrimSpace(r.FormValue("local_prefix"))
+	cfg.NtfyURL = strings.TrimSpace(r.FormValue("ntfy_url"))
+	cfg.NtfyChannel = strings.TrimSpace(r.FormValue("ntfy_channel"))
+	cfg.NtfyUser = strings.TrimSpace(r.FormValue("ntfy_user"))
+	cfg.NtfyPassword = strings.TrimSpace(r.FormValue("ntfy_password"))
 
 	if err := s.scheduler.UpdateConfig(cfg); err != nil {
 		http.Error(w, "Failed to save config", http.StatusInternalServerError)

@@ -23,6 +23,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /projects/{slug}/jobs/{id}", s.getJobDetail)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs/{id}/cancel", s.postCancelJob)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs/{id}/retry", s.postRetryJob)
+	s.mux.HandleFunc("POST /projects/{slug}/jobs/{id}/edit", s.postEditJob)
 	s.mux.HandleFunc("GET /projects/{slug}/jobs/{id}/logs/stdout", s.getJobLogStdout)
 	s.mux.HandleFunc("GET /projects/{slug}/jobs/{id}/logs/stderr", s.getJobLogStderr)
 
@@ -30,6 +31,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /projects/{slug}/visualizations/new", s.getNewVisualization)
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations", s.postVisualization)
 	s.mux.HandleFunc("GET /projects/{slug}/visualizations/{id}", s.getVisualizationDetail)
+	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}", s.postUpdateVisualization)
 	s.mux.HandleFunc("GET /projects/{slug}/visualizations/{id}/file", s.getVisualizationFile)
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}/generate", s.postGenerateVisualization)
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}/delete", s.postDeleteVisualization)
@@ -43,6 +45,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /machines/new", s.getNewMachines)
 	s.mux.HandleFunc("POST /machines", s.postMachines)
 	s.mux.HandleFunc("POST /machines/{id}/delete", s.postDeleteMachine)
+	s.mux.HandleFunc("POST /machines/{id}/reset", s.postResetMachine) // nouveau
 
 	s.mux.HandleFunc("GET /proxies/new", s.getNewProxy)
 	s.mux.HandleFunc("POST /proxies", s.postProxy)

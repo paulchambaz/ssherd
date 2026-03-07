@@ -149,6 +149,8 @@ onReady(() => {
 
     const seedFlag =
       (document.getElementById("seed_flag") || {}).value || "--seed";
+    const startSeed =
+      parseInt((document.getElementById("start_seed") || {}).value) || 1;
     const numSeeds =
       parseInt((document.getElementById("num_seeds") || {}).value) || 1;
     const axes = getAxes();
@@ -167,14 +169,12 @@ onReady(() => {
 
     const allLines = [];
     for (const combo of combos) {
-      // ablation = slug de toutes les valeurs du combo (dernier token)
       const ablationParts = combo.map((v) => slugify(lastToken(v)));
       const ablation =
         ablationParts.length > 0 ? ablationParts.join("_") : "run";
 
-      for (let s = 1; s <= numSeeds; s++) {
+      for (let s = startSeed; s < startSeed + numSeeds; s++) {
         const vars = { seed: String(s), ablation };
-        // {<axis_name>} pour chaque axe nommé
         axes.forEach((ax, i) => {
           if (ax.name && i < combo.length) {
             vars[ax.name] = lastToken(combo[i]);
@@ -273,7 +273,7 @@ onReady(() => {
     updatePreview();
   }
 
-  ["base_command", "seed_flag", "num_seeds"].forEach((id) => {
+  ["base_command", "seed_flag", "start_seed", "num_seeds"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("input", updatePreview);
   });
@@ -723,3 +723,31 @@ function copyToClipboard(text, btnId) {
       }, 2000);
     });
 }
+
+// ─── Inline retry command edit (job detail page) ──────────────────────────────
+
+window.startEditRetry = function () {
+  document.getElementById("retry-display").classList.add("hidden");
+  const form = document.getElementById("retry-form");
+  form.classList.remove("hidden");
+  form.classList.add("flex");
+  const input = document.getElementById("retry-input");
+  input.focus();
+  // Placer le curseur à la fin
+  input.setSelectionRange(input.value.length, input.value.length);
+};
+
+window.cancelEditRetry = function () {
+  document.getElementById("retry-form").classList.add("hidden");
+  document.getElementById("retry-form").classList.remove("flex");
+  document.getElementById("retry-display").classList.remove("hidden");
+};
+
+// Échap pour annuler
+onReady(() => {
+  const input = document.getElementById("retry-input");
+  if (!input) return;
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") cancelEditRetry();
+  });
+});
