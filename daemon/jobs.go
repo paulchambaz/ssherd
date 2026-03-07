@@ -25,7 +25,26 @@ func (s *Server) getNewBatch(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := views.NewBatchPage(p).Render(r.Context(), w); err != nil {
+
+	store, err := internal.LoadMachinesStore(s.cfg.CachePath)
+	if err != nil {
+		http.Error(w, "Failed to load machines", http.StatusInternalServerError)
+		return
+	}
+
+	seen := make(map[string]bool)
+	var gpuModels []string
+	for _, m := range store.Machines {
+		if m.GPUModel == "" || m.Status == internal.MachineStatusDeprecated {
+			continue
+		}
+		if !seen[m.GPUModel] {
+			seen[m.GPUModel] = true
+			gpuModels = append(gpuModels, m.GPUModel)
+		}
+	}
+
+	if err := views.NewBatchPage(p, gpuModels).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		log.Printf("Failed to render template: %v", err)
 	}
@@ -130,7 +149,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				parts = append(parts, lastToken(v))
 			}
 			parts = append(parts, "seed "+strconv.Itoa(seed))
-			displayName := strings.Join(parts, " - ")
+			displayName := substituteVars(strings.Join(parts, " - "), vars)
 
 			cmdTokens := append([]string{baseCommand}, combo...)
 			cmdTokens = append(cmdTokens, seedFlag, strconv.Itoa(seed))

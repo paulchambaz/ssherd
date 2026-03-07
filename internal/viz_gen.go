@@ -161,39 +161,52 @@ func (s *Scheduler) VizJobsWriting(project *Project, viz *Visualization) bool {
 }
 
 func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo VizCombo, localRepoDir string) error {
-	// Pull latest before running
 	if err := localGitCloneOrPull(project, localRepoDir); err != nil {
 		return fmt.Errorf("git pull before local viz: %w", err)
 	}
 
-	resolvedCmd := buildVizCommand(viz.VizCommand, combo, viz)
-
-	var axisParts []string
-	for _, arg := range combo.Args {
-		parts := strings.Fields(arg)
-		for _, part := range parts {
-			axisParts = append(axisParts, shellEscape(part))
-		}
-	}
-
 	prefix := s.getConfig().LocalPrefix
-	if prefix != "" {
-		resolvedCmd = prefix + " " + resolvedCmd
+	buildAndRun := func(vizCmd string) error {
+		resolvedCmd := buildVizCommand(vizCmd, combo, viz)
+		var axisParts []string
+		for _, arg := range combo.Args {
+			for _, part := range strings.Fields(arg) {
+				axisParts = append(axisParts, shellEscape(part))
+			}
+		}
+		if prefix != "" {
+			resolvedCmd = prefix + " " + resolvedCmd
+		}
+		cmdStr := fmt.Sprintf("cd %s && %s %s",
+			shellEscape(localRepoDir),
+			resolvedCmd,
+			strings.Join(axisParts, " "),
+		)
+		cmd := exec.Command("sh", "-c", cmdStr)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("cmd: %s\noutput: %s", cmdStr, out)
+		}
+		return nil
 	}
 
-	cmdStr := fmt.Sprintf("cd %s && %s %s",
-		shellEscape(localRepoDir),
-		resolvedCmd,
-		strings.Join(axisParts, " "),
-	)
-
-	cmd := exec.Command("sh", "-c", cmdStr)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("local viz failed\n  cmd: %s\n  output: %s", cmdStr, out)
+	var svgVizCmd, pngVizCmd string
+	if strings.Contains(viz.VizCommand, ".png") {
+		pngVizCmd = viz.VizCommand
+		svgVizCmd = strings.ReplaceAll(viz.VizCommand, ".png", ".svg")
+	} else {
+		svgVizCmd = viz.VizCommand
+		pngVizCmd = strings.ReplaceAll(viz.VizCommand, ".svg", ".png")
 	}
 
-	outputPath := VizLocalOutputPath(localRepoDir, viz.OutputFileTemplate, combo.Key)
-	log.Printf("viz: generated local %s combo %s → %s", viz.Name, combo.Key, outputPath)
+	if err := buildAndRun(svgVizCmd); err != nil {
+		return fmt.Errorf("local viz SVG failed: %w", err)
+	}
+	if err := buildAndRun(pngVizCmd); err != nil {
+		log.Printf("viz: PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
+		// non fatal — le SVG est déjà là
+	}
+
+	log.Printf("viz: generated local %s combo %s", viz.Name, combo.Key)
 	return nil
 }
 
@@ -203,7 +216,6 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 		return fmt.Errorf("no machine available for remote viz: %w", err)
 	}
 
-	log.Printf("viz: generateVizRemote: connecting to %s for %s combo=%s", machine.Name, viz.Name, combo.Key)
 	client, err := Connect(SSHConfig{
 		GatewayHost:     proxy.Hostname,
 		GatewayPort:     proxy.Port,
@@ -232,42 +244,85 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 		return fmt.Errorf("data not available on remote (%s)", viz.DataPath)
 	}
 
-	resolvedCmd := buildVizCommand(viz.VizCommand, combo, viz)
 	var axisParts []string
 	for _, arg := range combo.Args {
-		parts := strings.Fields(arg)
-		for _, part := range parts {
+		for _, part := range strings.Fields(arg) {
 			axisParts = append(axisParts, shellEscape(part))
 		}
 	}
-	cmdStr := fmt.Sprintf("cd %s && %s %s",
-		shellEscape(project.RemotePath),
-		resolvedCmd,
-		strings.Join(axisParts, " "),
-	)
 
-	log.Printf("viz: generateVizRemote: running cmd on %s: %s", machine.Name, truncateCmd(cmdStr))
-	_, stderr, code, err := client.Run(cmdStr)
-	if err != nil || code != 0 {
-		return fmt.Errorf("remote viz failed (code %d)\n  cmd: %s\n  output: %s", code, cmdStr, stderr)
+	runRemote := func(vizCmd, outputTpl string) (string, error) {
+		resolvedCmd := buildVizCommand(vizCmd, combo, viz)
+		cmdStr := fmt.Sprintf("cd %s && %s %s",
+			shellEscape(project.RemotePath),
+			resolvedCmd,
+			strings.Join(axisParts, " "),
+		)
+		_, stderr, code, err := client.Run(cmdStr)
+		if err != nil || code != 0 {
+			return "", fmt.Errorf("remote viz failed (code %d)\n  cmd: %s\n  output: %s", code, cmdStr, stderr)
+		}
+		remoteOutputPath := filepath.Join(project.RemotePath, buildVizCommand(outputTpl, combo, viz))
+		return remoteOutputPath, nil
 	}
 
-	remoteOutputPath := filepath.Join(project.RemotePath, buildVizCommand(viz.OutputFileTemplate, combo, viz))
-	data, err := client.ReadRemoteFileBinary(remoteOutputPath)
+	fetchAndSave := func(remotePath, localPath string) error {
+		data, err := client.ReadRemoteFileBinary(remotePath)
+		if err != nil {
+			return fmt.Errorf("read remote file %s: %w", remotePath, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+			return fmt.Errorf("mkdir: %w", err)
+		}
+		if err := os.WriteFile(localPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", localPath, err)
+		}
+		client.Run(fmt.Sprintf("rm -f %s", shellEscape(remotePath)))
+		return nil
+	}
+
+	sel := map[string]string{}
+	for i, ax := range viz.Axes {
+		if i < len(combo.Args) {
+			sel[ax.Name] = combo.Args[i]
+		}
+	}
+
+	var svgVizCmd, pngVizCmd, svgOutputTpl, pngOutputTpl string
+	if strings.Contains(viz.VizCommand, ".png") {
+		pngVizCmd = viz.VizCommand
+		svgVizCmd = strings.ReplaceAll(viz.VizCommand, ".png", ".svg")
+		pngOutputTpl = viz.OutputFileTemplate
+		svgOutputTpl = strings.ReplaceAll(viz.OutputFileTemplate, ".png", ".svg")
+	} else {
+		svgVizCmd = viz.VizCommand
+		pngVizCmd = strings.ReplaceAll(viz.VizCommand, ".svg", ".png")
+		svgOutputTpl = viz.OutputFileTemplate
+		pngOutputTpl = strings.ReplaceAll(viz.OutputFileTemplate, ".svg", ".png")
+	}
+
+	// SVG — fatal si échec
+	svgRemotePath, err := runRemote(svgVizCmd, svgOutputTpl)
 	if err != nil {
-		return fmt.Errorf("read remote viz output: %w", err)
+		return err
+	}
+	svgLocalPath := viz.ResolveOutputPath(localRepoDir, sel)
+	if err := fetchAndSave(svgRemotePath, svgLocalPath); err != nil {
+		return err
 	}
 
-	localOutputPath := VizLocalOutputPath(localRepoDir, viz.OutputFileTemplate, combo.Key)
-	if err := os.MkdirAll(filepath.Dir(localOutputPath), 0755); err != nil {
-		return fmt.Errorf("mkdir local output: %w", err)
-	}
-	if err := os.WriteFile(localOutputPath, data, 0644); err != nil {
-		return fmt.Errorf("write local viz output: %w", err)
+	// PNG — non fatal
+	pngRemotePath, err := runRemote(pngVizCmd, pngOutputTpl)
+	if err != nil {
+		log.Printf("viz: remote PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
+	} else {
+		pngLocalPath := VizLocalPNGPath(svgLocalPath)
+		if err := fetchAndSave(pngRemotePath, pngLocalPath); err != nil {
+			log.Printf("viz: fetch remote PNG failed for %s combo %s: %v", viz.Name, combo.Key, err)
+		}
 	}
 
-	client.Run(fmt.Sprintf("rm -f %s", shellEscape(remoteOutputPath)))
-	log.Printf("viz: generateVizRemote: done %s combo=%s → %s", viz.Name, combo.Key, localOutputPath)
+	log.Printf("viz: generateVizRemote: done %s combo=%s", viz.Name, combo.Key)
 	return nil
 }
 

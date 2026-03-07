@@ -1,3 +1,6 @@
+let allBatchLines = [];
+let allVizLines = [];
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function onReady(fn) {
@@ -109,8 +112,41 @@ onReady(() => {
     return first.values.flatMap((v) => sub.map((r) => [v, ...r]));
   }
 
+  function slugify(s) {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+  }
+
+  function lastToken(s) {
+    const parts = s.trim().split(/\s+/);
+    return parts[parts.length - 1] || s;
+  }
+
+  function substituteVars(s, vars) {
+    let out = s;
+    for (const [k, v] of Object.entries(vars)) {
+      out = out.replaceAll("{" + k + "}", v);
+    }
+    return out;
+  }
+
   function updatePreview() {
     const base = (document.getElementById("base_command") || {}).value || "";
+
+    if (!base.trim()) {
+      const el = document.getElementById("preview_commands");
+      if (el)
+        el.innerHTML =
+          '<div class="text-base-400">Enter a base command to preview.</div>';
+      const countEl = document.getElementById("preview_count");
+      if (countEl) countEl.textContent = "";
+      const toggleBtn = document.getElementById("preview_toggle");
+      if (toggleBtn) toggleBtn.style.display = "none";
+      return;
+    }
+
     const seedFlag =
       (document.getElementById("seed_flag") || {}).value || "--seed";
     const numSeeds =
@@ -125,16 +161,28 @@ onReady(() => {
 
     const toggleBtn = document.getElementById("preview_toggle");
     if (toggleBtn) {
+      toggleBtn.style.display = total <= 5 ? "none" : "";
       toggleBtn.textContent = previewExpanded ? "Show less" : "Show all";
-      toggleBtn.style.display = total <= 3 ? "none" : "";
     }
 
     const allLines = [];
     for (const combo of combos) {
+      // ablation = slug de toutes les valeurs du combo (dernier token)
+      const ablationParts = combo.map((v) => slugify(lastToken(v)));
+      const ablation =
+        ablationParts.length > 0 ? ablationParts.join("_") : "run";
+
       for (let s = 1; s <= numSeeds; s++) {
-        const cmd = [base, ...combo, seedFlag, s]
-          .filter((p) => p !== "")
-          .join(" ");
+        const vars = { seed: String(s), ablation };
+        // {<axis_name>} pour chaque axe nommé
+        axes.forEach((ax, i) => {
+          if (ax.name && i < combo.length) {
+            vars[ax.name] = lastToken(combo[i]);
+          }
+        });
+
+        const tokens = [base, ...combo, seedFlag, String(s)].filter(Boolean);
+        const cmd = substituteVars(tokens.join(" "), vars);
         allLines.push('<div class="truncate">' + esc(cmd) + "</div>");
       }
     }
@@ -148,14 +196,23 @@ onReady(() => {
       return;
     }
 
+    allBatchLines = allLines.map((l) => {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = l;
+      return [...tmp.querySelectorAll("div")]
+        .map((d) => d.textContent.trim())
+        .filter(Boolean)
+        .join("\n");
+    });
+
     if (previewExpanded) {
       el.innerHTML = allLines.join("");
     } else {
-      const visible = allLines.slice(0, 3).join("");
+      const visible = allLines.slice(0, 5).join("");
       const more =
-        total > 3
+        total > 5
           ? '<div class="text-base-400 mt-1">… and ' +
-          (total - 3) +
+          (total - 5) +
           ' more — click "Show all" to expand</div>'
           : "";
       el.innerHTML = visible + more;
@@ -259,6 +316,7 @@ onReady(() => {
   if (!form) return;
 
   let nextVizIdx = 0;
+  let vizPreviewExpanded = false;
 
   function slugify(s) {
     return s
@@ -314,42 +372,116 @@ onReady(() => {
     const cmdTpl =
       (document.getElementById("viz_command_input") || {}).value || "";
     const axes = getVizAxes();
-    const toggleable = axes.filter((ax) => ax.toggleable);
-    const fixed = axes.filter((ax) => !ax.toggleable);
+    const toggleable = axes;
 
-    let count = 1;
-    toggleable.forEach((ax) => {
-      count *= ax.values.length || 1;
-    });
-
+    const el = document.getElementById("viz_preview_commands");
     const countEl = document.getElementById("viz_preview_count");
+    const toggleBtn = document.getElementById("viz-preview-toggle");
+
+    if (!cmdTpl.trim()) {
+      if (el)
+        el.innerHTML =
+          '<div class="text-base-400">Enter a base command to preview.</div>';
+      if (countEl) countEl.textContent = "";
+      if (toggleBtn) toggleBtn.style.display = "none";
+      const hidden = document.getElementById("axes_json");
+      if (hidden) hidden.value = JSON.stringify(axes);
+      return;
+    }
+
+    const hasSvg = cmdTpl.includes(".svg");
+    const hasPng = cmdTpl.includes(".png");
+    const hasDual = hasSvg || hasPng;
+
+    const comboCount =
+      toggleable.reduce((acc, ax) => acc * (ax.values.length || 1), 1) || 1;
+    const totalCount = hasDual ? comboCount * 2 : comboCount;
+
     if (countEl)
-      countEl.textContent = count + " output" + (count !== 1 ? "s" : "");
+      countEl.textContent =
+        totalCount + " output" + (totalCount !== 1 ? "s" : "");
+
+    const lineCount = hasDual ? comboCount * 2 : comboCount;
+    if (toggleBtn) {
+      toggleBtn.style.display = lineCount <= 5 ? "none" : "";
+      toggleBtn.textContent = vizPreviewExpanded ? "Show less" : "Show all";
+    }
 
     const combos = cartesianViz(
       toggleable.map((ax) => ax.values.map((v) => ({ axis: ax, val: v }))),
     );
 
-    const lines = combos.map((combo) => {
-      const resolvedBase = resolveCmd(cmdTpl, combo);
+    const allLines = combos.map((combo, i) => {
+      const resolvedCmd = resolveCmd(cmdTpl, combo);
       const axisArgs = combo.map(({ val }) => val).filter(Boolean);
       const fullCmd =
         axisArgs.length > 0
-          ? resolvedBase + " " + axisArgs.join(" ")
-          : resolvedBase;
-      return '<div class="truncate">' + esc(fullCmd) + "</div>";
+          ? resolvedCmd + " " + axisArgs.join(" ")
+          : resolvedCmd;
+
+      const sep =
+        i > 0 ? '<div class="border-t border-base-200 my-1.5"></div>' : "";
+
+      if (hasSvg) {
+        const pngCmd = fullCmd.replaceAll(".svg", ".png");
+        return (
+          sep +
+          '<div class="truncate">' +
+          esc(fullCmd) +
+          "</div>" +
+          '<div class="truncate text-base-400">' +
+          esc(pngCmd) +
+          "</div>"
+        );
+      } else if (hasPng) {
+        const svgCmd = fullCmd.replaceAll(".png", ".svg");
+        return (
+          sep +
+          '<div class="truncate">' +
+          esc(svgCmd) +
+          "</div>" +
+          '<div class="truncate text-base-400">' +
+          esc(fullCmd) +
+          "</div>"
+        );
+      } else {
+        return sep + '<div class="truncate">' + esc(fullCmd) + "</div>";
+      }
     });
 
-    const el = document.getElementById("viz_preview_commands");
-    if (!el) return;
-    el.innerHTML =
-      lines.length > 0 && cmdTpl
-        ? lines.join("")
-        : '<div class="text-base-400">Fill in the viz command to see a preview.</div>';
+    const maxCombos = hasDual ? 2 : 5;
+    if (el) {
+      allVizLines = allLines.map((l) => {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = l;
+        return [...tmp.querySelectorAll("div")]
+          .map((d) => d.textContent.trim())
+          .filter(Boolean)
+          .join("\n");
+      });
+
+      if (vizPreviewExpanded) {
+        el.innerHTML = allLines.join("");
+      } else {
+        const visible = allLines.slice(0, maxCombos).join("");
+        const hidden =
+          comboCount > maxCombos
+            ? '<div class="text-base-400 mt-1">… and ' +
+            (comboCount - maxCombos) +
+            ' more — click "Show all" to expand</div>'
+            : "";
+        el.innerHTML = visible + hidden;
+      }
+    }
 
     const hidden = document.getElementById("axes_json");
     if (hidden) hidden.value = JSON.stringify(axes);
   }
+
+  window.toggleVizPreview = function() {
+    vizPreviewExpanded = !vizPreviewExpanded;
+    updateVizPreview();
+  };
 
   window.addVizAxis = function() {
     const container = document.getElementById("viz_axes_container");
@@ -442,7 +574,8 @@ onReady(() => {
 
       if (ax.name) {
         const lbl = document.createElement("span");
-        lbl.className = "text-xs font-semibold text-base-500 w-24 shrink-0 text-right";
+        lbl.className =
+          "text-xs font-semibold text-base-500 w-24 shrink-0 text-right";
         lbl.textContent = ax.name;
         row.appendChild(lbl);
       }
@@ -513,9 +646,45 @@ onReady(() => {
           const parts = Object.entries(selection).map(([k, v]) => k + "=" + v);
           label.textContent = parts.length > 0 ? parts.join(" · ") : "default";
         }
-        if (downloadLink) {
-          downloadLink.href = url;
-          downloadLink.classList.remove("hidden");
+
+        const svgLink = document.getElementById("viz-download-svg");
+        const pngLink = document.getElementById("viz-download-png");
+        const copyBtn = document.getElementById("viz-copy-png");
+
+        if (svgLink) {
+          svgLink.href = url;
+          svgLink.classList.remove("hidden");
+        }
+        if (pngLink) {
+          const pngUrl = url + (url.includes("?") ? "&" : "?") + "format=png";
+          pngLink.href = pngUrl;
+          pngLink.classList.remove("hidden");
+        }
+        if (copyBtn) {
+          copyBtn.classList.remove("hidden");
+          copyBtn.onclick = async () => {
+            try {
+              const pngUrl =
+                url + (url.includes("?") ? "&" : "?") + "format=png";
+              const resp = await fetch(pngUrl);
+              if (!resp.ok) throw new Error("PNG not available");
+              const blob = await resp.blob();
+              await navigator.clipboard.write([
+                new ClipboardItem({ "image/png": blob }),
+              ]);
+              const prev = copyBtn.innerHTML;
+              copyBtn.innerHTML = "Copied!";
+              setTimeout(() => {
+                copyBtn.innerHTML = prev;
+              }, 2000);
+            } catch (e) {
+              const prev = copyBtn.innerHTML;
+              copyBtn.innerHTML = "Failed";
+              setTimeout(() => {
+                copyBtn.innerHTML = prev;
+              }, 2000);
+            }
+          };
         }
       })
       .catch(() => {
@@ -526,3 +695,31 @@ onReady(() => {
   updateButtons();
   loadOutput();
 });
+
+window.copyBatchPreview = function() {
+  copyToClipboard(allBatchLines.join("\n"), "batch-copy-all");
+};
+
+window.copyVizPreview = function() {
+  copyToClipboard(allVizLines.join("\n"), "viz-copy-all");
+};
+
+function copyToClipboard(text, btnId) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  const prev = btn.innerHTML;
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      btn.innerHTML = "Copied!";
+      setTimeout(() => {
+        btn.innerHTML = prev;
+      }, 2000);
+    })
+    .catch(() => {
+      btn.innerHTML = "Failed";
+      setTimeout(() => {
+        btn.innerHTML = prev;
+      }, 2000);
+    });
+}

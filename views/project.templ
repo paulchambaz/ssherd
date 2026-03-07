@@ -29,7 +29,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 		<div class="max-w-5xl mx-auto w-full px-8 mt-6 pb-12">
 			switch data.Tab {
 				case internal.TabDashboard:
-					@projectDashboard(data.Project, data.Jobs)
+					@projectDashboard(data.Project, data.Jobs, data.Visualizations)
 				case internal.TabJobs:
 					@projectJobs(data.Project, data.Jobs)
 				case internal.TabVisualizations:
@@ -64,7 +64,7 @@ templ projectTabLink(href, label string, active bool) {
 	>{ label }</a>
 }
 
-templ projectDashboard(p *internal.Project, jobs []*internal.Job) {
+templ projectDashboard(p *internal.Project, jobs []*internal.Job, vizs []*internal.Visualization) {
 	{{ active, done, failed := countJobsByStatus(jobs) }}
 	<div class="grid grid-cols-3 gap-4 mb-8">
 		@statCard("Active jobs", fmt.Sprintf("%d", active), "running")
@@ -75,14 +75,25 @@ templ projectDashboard(p *internal.Project, jobs []*internal.Job) {
 		<div class="border border-base-300 rounded-md overflow-hidden">
 			<div class="px-4 py-3 border-b border-base-300 flex items-center justify-between">
 				<span class="text-sm font-semibold">Latest visualization</span>
-				<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="text-xs text-accent-500 hover:underline">View all</a>
+				<div class="flex items-center gap-3">
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/new") } class="text-xs text-accent-500 hover:underline">+ New</a>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="text-xs text-accent-500 hover:underline">View all</a>
+				</div>
 			</div>
-			<div class="px-4 py-10 text-center text-base-400 text-sm">No visualizations yet</div>
+			if len(vizs) == 0 {
+				<div class="px-4 py-10 text-center text-base-400 text-sm">No visualizations yet</div>
+			} else {
+				{{ last := vizs[len(vizs)-1] }}
+				@vizMiniViewer(p, last)
+			}
 		</div>
 		<div class="border border-base-300 rounded-md overflow-hidden">
 			<div class="px-4 py-3 border-b border-base-300 flex items-center justify-between">
 				<span class="text-sm font-semibold">Recent jobs</span>
-				<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="text-xs text-accent-500 hover:underline">View all</a>
+				<div class="flex items-center gap-3">
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/new") } class="text-xs text-accent-500 hover:underline">+ New</a>
+					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="text-xs text-accent-500 hover:underline">View all</a>
+				</div>
 			</div>
 			if len(jobs) == 0 {
 				<div class="px-4 py-10 text-center text-base-400 text-sm">No jobs yet</div>
@@ -174,7 +185,6 @@ templ projectVisualizations(p *internal.Project, vizs []*internal.Visualization)
 					</div>
 					<div class="flex items-center gap-4 shrink-0 ml-4">
 						<span class="text-xs text-base-400">{ fmt.Sprintf("%d SVG%s", v.SVGCount(), func() string { if v.SVGCount() != 1 { return "s" }; return "" }()) }</span>
-						<span class="text-xs text-accent-500">View →</span>
 					</div>
 				</a>
 			}
@@ -290,5 +300,29 @@ templ projectSettings(p *internal.Project) {
 				</form>
 			</div>
 		</div>
+	</div>
+}
+
+templ vizMiniViewer(p *internal.Project, viz *internal.Visualization) {
+	<div
+		id="viz-viewer"
+		data-axes={ vizToggleAxesJSON(viz) }
+		data-file-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/file" }
+		data-jobs-writing="false"
+	>
+		<div id="viz-controls" class="px-4 py-2 border-b border-base-300 bg-base-50 space-y-2 hidden"></div>
+		<a
+			href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) }
+			class="block px-4 py-4 flex flex-col items-center justify-center min-h-[200px] bg-base-50 hover:bg-base-100 transition-colors"
+			id="viz-output-container"
+		>
+			<img id="viz-output-img" src="" alt="Visualization" class="max-w-full hidden"/>
+			<div id="viz-output-placeholder" class="text-center text-base-400 text-sm">
+				<p>Not generated yet. Click to open.</p>
+			</div>
+			<div id="viz-output-error" class="text-center text-red-400 text-sm hidden">
+				Failed to load output file.
+			</div>
+		</a>
 	</div>
 }

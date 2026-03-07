@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+type Visualization struct {
+	ID                 string    `json:"id"`
+	ProjectID          string    `json:"project_id"`
+	Name               string    `json:"name"`
+	Description        string    `json:"description"`
+	VizCommand         string    `json:"viz_command"`
+	DataPath           string    `json:"data_path"`
+	OutputFileTemplate string    `json:"output_file_template"`
+	BuildRemote        bool      `json:"build_remote"`
+	Axes               []VizAxis `json:"axes"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
 type VizAxis struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`
@@ -18,19 +32,6 @@ type VizAxis struct {
 type VizCombo struct {
 	Key  string
 	Args []string
-}
-
-type Visualization struct {
-	ID                 string    `json:"id"`
-	ProjectID          string    `json:"project_id"`
-	Name               string    `json:"name"`
-	VizCommand         string    `json:"viz_command"`
-	DataPath           string    `json:"data_path"`
-	OutputFileTemplate string    `json:"output_file_template"`
-	BuildRemote        bool      `json:"build_remote"`
-	Axes               []VizAxis `json:"axes"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 func (v *Visualization) ToggleableAxes() []VizAxis {
@@ -211,6 +212,17 @@ func LoadVisualizations(cachePath, projectID string) ([]*Visualization, error) {
 		}
 		vizs = append(vizs, viz)
 	}
+
+	seen := make(map[string]bool)
+	deduped := vizs[:0]
+	for _, v := range vizs {
+		if !seen[v.ID] {
+			seen[v.ID] = true
+			deduped = append(deduped, v)
+		}
+	}
+	vizs = deduped
+
 	sort.Slice(vizs, func(i, j int) bool {
 		return vizs[i].CreatedAt.Before(vizs[j].CreatedAt)
 	})
@@ -219,4 +231,41 @@ func LoadVisualizations(cachePath, projectID string) ([]*Visualization, error) {
 
 func DeleteVisualization(cachePath, projectID, vizID string) error {
 	return os.RemoveAll(vizDir(cachePath, projectID, vizID))
+}
+
+func (v *Visualization) ResolveOutputPath(localRepoDir string, selection map[string]string) string {
+	for _, combo := range v.AllCombos() {
+		comboSel := map[string]string{}
+		for i, ax := range v.Axes {
+			if i < len(combo.Args) {
+				comboSel[ax.Name] = combo.Args[i]
+			}
+		}
+		match := true
+		for name, val := range selection {
+			if comboSel[name] != val {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		resolved := buildVizCommand(v.OutputFileTemplate, combo, v)
+		if filepath.IsAbs(resolved) {
+			return resolved
+		}
+		return filepath.Join(localRepoDir, resolved)
+	}
+	// fallback
+	key := v.ComboKey(selection)
+	return VizLocalOutputPath(localRepoDir, v.OutputFileTemplate, key)
+}
+
+func VizLocalPNGPath(svgPath string) string {
+	ext := filepath.Ext(svgPath)
+	if ext == "" {
+		return svgPath + ".png"
+	}
+	return svgPath[:len(svgPath)-len(ext)] + ".png"
 }

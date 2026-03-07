@@ -1,13 +1,11 @@
 package internal
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -168,9 +166,11 @@ func (s *Scheduler) dispatchLoop() {
 
 func (s *Scheduler) dispatchTick() {
 	s.mu.Lock()
+	log.Printf("scheduler: dispatch: LOCK acquired, loading store")
 	defer s.mu.Unlock()
 
 	store, err := LoadMachinesStore(s.cachePath)
+	log.Printf("scheduler: dispatch: store loaded")
 	if err != nil {
 		log.Printf("scheduler: dispatch: failed to load machines store: %v", err)
 		return
@@ -421,7 +421,9 @@ func (s *Scheduler) monitorLoop() {
 	for {
 		time.Sleep(s.getConfig().MonitorInterval)
 
+		log.Printf("scheduler: monitor: about to RLock")
 		s.mu.RLock()
+		log.Printf("scheduler: monitor: RLock acquired")
 		var running []*Job
 		for _, j := range s.jobs {
 			if j.Status == JobRunning {
@@ -986,58 +988,42 @@ func (s *Scheduler) syncRepo(project *Project) error {
 		return nil
 	}
 
-	// Trouver une machine running depuis machineStates — pas de SSH, pas de watcher.
 	machine, proxy, err := s.findMachineForRsync()
 	if err != nil {
-		return fmt.Errorf("no machine for rsync: %w", err)
+		return fmt.Errorf("no machine for sync: %w", err)
 	}
-	log.Printf("scheduler: syncRepo: using machine=%s for rsync (%d output dirs)", machine.Name, len(outputDirs))
+	log.Printf("scheduler: syncRepo: using machine=%s for sync (%d output dirs)", machine.Name, len(outputDirs))
 
-	sshCmd := fmt.Sprintf(
-		"ssh -o StrictHostKeyChecking=no -o ProxyJump=%s@%s:%d",
-		proxy.User, proxy.Hostname, proxy.Port,
-	)
-
-	const rsyncTimeout = 2 * time.Minute
-	const rsyncMaxRetries = 3
+	client, err := Connect(SSHConfig{
+		GatewayHost:     proxy.Hostname,
+		GatewayPort:     proxy.Port,
+		GatewayUser:     proxy.User,
+		GatewayPassword: proxy.Password,
+		TargetHost:      machine.Hostname,
+		TargetPort:      22,
+		TargetUser:      machine.User,
+		TargetPassword:  proxy.Password,
+		ConnectTimeout:  30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("connect for sync: %w", err)
+	}
+	defer client.Close()
 
 	for outputDir := range outputDirs {
 		if !strings.HasPrefix(outputDir, project.RemotePath) {
-			log.Printf("scheduler: syncRepo: output path %s not under %s, skipping", outputDir, project.RemotePath)
+			log.Printf("scheduler: syncRepo: %s not under %s, skipping", outputDir, project.RemotePath)
 			continue
 		}
 		rel, _ := filepath.Rel(project.RemotePath, outputDir)
 		localDir := filepath.Join(localRepoDir, rel)
-		if err := os.MkdirAll(localDir, 0755); err != nil {
-			log.Printf("scheduler: syncRepo: mkdir %s: %v", localDir, err)
+
+		syncStart := time.Now()
+		if err := client.SyncDirToLocal(outputDir, localDir); err != nil {
+			log.Printf("scheduler: syncRepo: sync failed %s: %v", outputDir, err)
 			continue
 		}
-
-		src := fmt.Sprintf("%s@%s:%s/", machine.User, machine.Hostname, outputDir)
-		dst := localDir + "/"
-		rsyncStart := time.Now()
-		log.Printf("scheduler: syncRepo: rsync start %s → %s", outputDir, localDir)
-
-		for attempt := 0; attempt < rsyncMaxRetries; attempt++ {
-			if attempt > 0 {
-				log.Printf("scheduler: syncRepo: rsync retry %d/%d for %s", attempt, rsyncMaxRetries-1, outputDir)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), rsyncTimeout)
-			cmd := exec.CommandContext(ctx, "rsync", "-az", "--checksum", "-e", sshCmd, src, dst)
-			out, err := cmd.CombinedOutput()
-			cancel()
-
-			if err == nil {
-				log.Printf("scheduler: syncRepo: rsync done %s (%s)", outputDir, time.Since(rsyncStart).Round(time.Millisecond))
-				break
-			}
-			if ctx.Err() == context.DeadlineExceeded {
-				log.Printf("scheduler: syncRepo: rsync timeout after %s for %s (attempt %d/%d)", rsyncTimeout, outputDir, attempt+1, rsyncMaxRetries)
-				continue
-			}
-			log.Printf("scheduler: syncRepo: rsync failed %s: %v\n%s", outputDir, err, out)
-			break
-		}
+		log.Printf("scheduler: syncRepo: synced %s (%s)", outputDir, time.Since(syncStart).Round(time.Millisecond))
 	}
 
 	log.Printf("scheduler: syncRepo: done project=%s (total %s)", project.Slug, time.Since(start).Round(time.Millisecond))

@@ -40,6 +40,7 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
+	description := strings.TrimSpace(r.FormValue("description"))
 	vizCommand := strings.TrimSpace(r.FormValue("viz_command"))
 	outputTemplate := strings.TrimSpace(r.FormValue("output_file_template"))
 	if name == "" || vizCommand == "" || outputTemplate == "" {
@@ -90,6 +91,7 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		ID:                 id,
 		ProjectID:          p.ID,
 		Name:               name,
+		Description:        description,
 		VizCommand:         vizCommand,
 		DataPath:           absOrRelative(strings.TrimSpace(r.FormValue("data_path")), p.RemotePath),
 		OutputFileTemplate: outputTemplate,
@@ -137,12 +139,7 @@ func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if viz.OutputFileTemplate == "" {
-		http.NotFound(w, r)
-		return
-	}
 
-	// Reconstruction de la sélection depuis les query params
 	selection := viz.DefaultSelection()
 	for _, ax := range viz.ToggleableAxes() {
 		if val := r.URL.Query().Get(ax.Name); val != "" {
@@ -155,9 +152,12 @@ func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	key := viz.ComboKey(selection)
 	localRepoDir := filepath.Join(s.cfg.CachePath, p.ID, "repo")
-	outputPath := internal.VizLocalOutputPath(localRepoDir, viz.OutputFileTemplate, key)
+	outputPath := viz.ResolveOutputPath(localRepoDir, selection)
+
+	if r.URL.Query().Get("format") == "png" {
+		outputPath = internal.VizLocalPNGPath(outputPath)
+	}
 
 	data, err := os.ReadFile(outputPath)
 	if err != nil {

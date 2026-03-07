@@ -23,7 +23,6 @@
         ];
 
         runPkgs = with pkgs; [
-          rsync
           nix
         ];
 
