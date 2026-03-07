@@ -22,6 +22,8 @@ type Visualization struct {
 	Axes               []VizAxis `json:"axes"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+
+	FormState json.RawMessage `json:"form_state,omitempty"`
 }
 
 type VizAxis struct {

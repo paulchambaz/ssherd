@@ -227,7 +227,7 @@ onReady(() => {
     updatePreview();
   };
 
-  function addAxis() {
+  function addAxis(initialName = "", initialValues = "") {
     const container = document.getElementById("axes_container");
     const placeholder = container.querySelector("p");
     if (placeholder) placeholder.remove();
@@ -251,11 +251,18 @@ onReady(() => {
       'placeholder="--env antmaze-large-play-v2\n--env antmaze-large-diverse-v2" ' +
       'class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>';
 
-    div.querySelector("input").addEventListener("input", updatePreview);
-    div.querySelector("textarea").addEventListener("input", updatePreview);
+    const nameInput = div.querySelector("input");
+    const valuesTextarea = div.querySelector("textarea");
+
+    nameInput.addEventListener("input", updatePreview);
+    valuesTextarea.addEventListener("input", updatePreview);
     div
       .querySelector(".remove-axis")
       .addEventListener("click", () => removeAxis(div));
+
+    if (initialName) nameInput.value = initialName;
+    if (initialValues) valuesTextarea.value = initialValues;
+
     container.appendChild(div);
     updatePreview();
   }
@@ -283,6 +290,60 @@ onReady(() => {
   });
 
   window.addAxis = addAxis;
+
+  // ─── Redo : restauration du FormState ────────────────────────────────────
+  const stateJSON = form.dataset.formState;
+  if (stateJSON) {
+    try {
+      const state = JSON.parse(stateJSON);
+      const setVal = (selector, val) => {
+        if (val == null) return;
+        const el = form.querySelector(selector);
+        if (el) el.value = val;
+      };
+
+      setVal('[name="name_prefix"]', state.name_prefix);
+      setVal('[name="log_path"]', state.log_path);
+      setVal('[name="output_path"]', state.output_path);
+      setVal('[name="output_files"]', state.output_files);
+      setVal('[name="min_vram"]', state.min_vram);
+      setVal('[name="max_retries"]', state.max_retries);
+      setVal('[name="retry_suffix"]', state.retry_suffix);
+
+      const baseCmd = document.getElementById("base_command");
+      if (baseCmd && state.base_command != null)
+        baseCmd.value = state.base_command;
+
+      const seedFlagEl = document.getElementById("seed_flag");
+      if (seedFlagEl && state.seed_flag != null)
+        seedFlagEl.value = state.seed_flag;
+
+      const startSeedEl = document.getElementById("start_seed");
+      if (startSeedEl && state.start_seed != null)
+        startSeedEl.value = state.start_seed;
+
+      const numSeedsEl = document.getElementById("num_seeds");
+      if (numSeedsEl && state.num_seeds != null)
+        numSeedsEl.value = state.num_seeds;
+
+      const gpuSelect = form.querySelector('[name="preferred_gpu"]');
+      if (gpuSelect && state.preferred_gpu != null) {
+        const opt = [...gpuSelect.options].find(
+          (o) => o.value === state.preferred_gpu,
+        );
+        if (opt) gpuSelect.value = state.preferred_gpu;
+      }
+
+      if (Array.isArray(state.axes)) {
+        state.axes.forEach((ax) => {
+          addAxis(ax.name || "", (ax.values || []).join("\n"));
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to restore batch form state:", e);
+    }
+  }
+
   updatePreview();
 });
 
@@ -483,7 +544,7 @@ onReady(() => {
     updateVizPreview();
   };
 
-  window.addVizAxis = function() {
+  function addVizAxis(initialName = "", initialValues = "") {
     const container = document.getElementById("viz_axes_container");
     const empty = document.getElementById("viz_axes_empty");
     if (empty) empty.remove();
@@ -504,12 +565,11 @@ onReady(() => {
       class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>
   `;
 
-    div
-      .querySelector("#viz_axis_" + idx + "_name")
-      .addEventListener("input", updateVizPreview);
-    div
-      .querySelector("#viz_axis_" + idx + "_values")
-      .addEventListener("input", updateVizPreview);
+    const nameInput = div.querySelector(`#viz_axis_${idx}_name`);
+    const valuesTextarea = div.querySelector(`#viz_axis_${idx}_values`);
+
+    nameInput.addEventListener("input", updateVizPreview);
+    valuesTextarea.addEventListener("input", updateVizPreview);
     div.querySelector(".remove-viz-axis").addEventListener("click", () => {
       div.remove();
       if (!document.querySelector(".viz-axis-block")) {
@@ -522,9 +582,12 @@ onReady(() => {
       updateVizPreview();
     });
 
+    if (initialName) nameInput.value = initialName;
+    if (initialValues) valuesTextarea.value = initialValues;
+
     container.appendChild(div);
     updateVizPreview();
-  };
+  }
 
   document
     .getElementById("viz_command_input")
@@ -537,6 +600,44 @@ onReady(() => {
     const hidden = document.getElementById("axes_json");
     if (hidden) hidden.value = JSON.stringify(getVizAxes());
   });
+
+  window.addVizAxis = addVizAxis;
+
+  // ─── Redo : restauration du VizFormState ─────────────────────────────────
+  const stateJSON = form.dataset.formState;
+  if (stateJSON) {
+    try {
+      const state = JSON.parse(stateJSON);
+      const setVal = (selector, val) => {
+        if (val == null) return;
+        const el = form.querySelector(selector);
+        if (el) el.value = val;
+      };
+
+      setVal('[name="name"]', state.name);
+      setVal('[name="description"]', state.description);
+      setVal('[name="data_path"]', state.data_path);
+      setVal('[name="output_file_template"]', state.output_file_template);
+
+      const vizCmd = document.getElementById("viz_command_input");
+      if (vizCmd && state.viz_command != null) vizCmd.value = state.viz_command;
+
+      if (state.build_remote === true) {
+        const toggle = document.getElementById("viz_mode_toggle");
+        if (toggle && toggle.getAttribute("aria-checked") !== "true") {
+          window.toggleVizMode();
+        }
+      }
+
+      if (Array.isArray(state.axes)) {
+        state.axes.forEach((ax) => {
+          addVizAxis(ax.name || "", (ax.values || []).join("\n"));
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to restore viz form state:", e);
+    }
+  }
 
   updateVizPreview();
 });
@@ -556,16 +657,13 @@ onReady(() => {
   const downloadLink = document.getElementById("viz-download-link");
   const label = document.getElementById("viz-output-label");
 
-  // Capture whether the server rendered a gen error before JS touches the DOM
   const hadServerError = !errorEl.classList.contains("hidden");
 
-  // Build selection state from axes defaults
   const selection = {};
   axes.forEach((ax) => {
     if (ax.values && ax.values.length > 0) selection[ax.name] = ax.values[0];
   });
 
-  // Build axis toggle controls
   if (axes.length > 0) {
     controls.classList.remove("hidden");
     axes.forEach((ax) => {
@@ -634,7 +732,6 @@ onReady(() => {
           if (!hadServerError) placeholder.classList.remove("hidden");
           return;
         }
-        // Successful — clear any server error and show the image
         errorEl.classList.add("hidden");
         img.src = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
         img.onload = () => img.classList.remove("hidden");
@@ -726,24 +823,22 @@ function copyToClipboard(text, btnId) {
 
 // ─── Inline retry command edit (job detail page) ──────────────────────────────
 
-window.startEditRetry = function () {
+window.startEditRetry = function() {
   document.getElementById("retry-display").classList.add("hidden");
   const form = document.getElementById("retry-form");
   form.classList.remove("hidden");
   form.classList.add("flex");
   const input = document.getElementById("retry-input");
   input.focus();
-  // Placer le curseur à la fin
   input.setSelectionRange(input.value.length, input.value.length);
 };
 
-window.cancelEditRetry = function () {
+window.cancelEditRetry = function() {
   document.getElementById("retry-form").classList.add("hidden");
   document.getElementById("retry-form").classList.remove("flex");
   document.getElementById("retry-display").classList.remove("hidden");
 };
 
-// Échap pour annuler
 onReady(() => {
   const input = document.getElementById("retry-input");
   if (!input) return;

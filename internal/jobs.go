@@ -9,6 +9,48 @@ import (
 	"time"
 )
 
+type Job struct {
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"project_id"`
+	ProjectSlug string     `json:"project_slug"`
+	DisplayName string     `json:"display_name"`
+	Status      JobStatus  `json:"status"`
+	Machine     string     `json:"machine,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	RetryCount  int        `json:"retry_count"`
+	MaxRetries  int        `json:"max_retries"`
+
+	RunCommand   string `json:"run_command"`
+	RetryCommand string `json:"retry_command"`
+
+	LogPath     string   `json:"log_path"`
+	OutputPath  string   `json:"output_path"`
+	NfsJobDir   string   `json:"nfs_job_dir"`
+	OutputFiles []string `json:"output_files,omitempty"`
+
+	Progress        *JobProgress    `json:"progress,omitempty"`
+	GPURequirements GPURequirements `json:"gpu_requirements"`
+
+	FormState json.RawMessage `json:"form_state,omitempty"`
+}
+
+type JobProgress struct {
+	CurrentStep int       `json:"current_step"`
+	TotalSteps  int       `json:"total_steps"`
+	StartTime   time.Time `json:"start_time"`
+	CurrentTime time.Time `json:"current_time"`
+	Percent     float64   `json:"percent"`
+	ETASeconds  float64   `json:"eta_seconds"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+type GPURequirements struct {
+	MinVRAMMB    int    `json:"min_vram_mb"`
+	PreferredGPU string `json:"preferred_gpu"`
+}
+
 type JobStatus string
 
 const (
@@ -52,53 +94,6 @@ func (s JobStatus) BadgeClass() string {
 	default:
 		return "bg-base-100 text-base-500"
 	}
-}
-
-type JobProgress struct {
-	CurrentStep int       `json:"current_step"`
-	TotalSteps  int       `json:"total_steps"`
-	StartTime   time.Time `json:"start_time"`
-	CurrentTime time.Time `json:"current_time"`
-	Percent     float64   `json:"percent"`
-	ETASeconds  float64   `json:"eta_seconds"`
-	LastUpdated time.Time `json:"last_updated"`
-}
-
-type GPURequirements struct {
-	MinVRAMMB    int    `json:"min_vram_mb"`
-	PreferredGPU string `json:"preferred_gpu"`
-}
-
-type Job struct {
-	ID          string     `json:"id"`
-	ProjectID   string     `json:"project_id"`
-	ProjectSlug string     `json:"project_slug"`
-	DisplayName string     `json:"display_name"`
-	Status      JobStatus  `json:"status"`
-	Machine     string     `json:"machine,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	RetryCount  int        `json:"retry_count"`
-	MaxRetries  int        `json:"max_retries"`
-
-	RunCommand   string `json:"run_command"`
-	RetryCommand string `json:"retry_command"`
-
-	// LogPath est un fichier JSON écrit par le script d'entraînement avec la
-	// progression. OutputPath est le dossier de résultats bruts.
-	LogPath    string `json:"log_path"`
-	OutputPath string `json:"output_path"`
-
-	// NfsJobDir est le dossier de travail sur NFS (.ssherd/jobs/<id>/).
-	NfsJobDir string `json:"nfs_job_dir"`
-
-	// OutputFiles est la liste des fichiers que ce job écrit et que le système
-	// doit surveiller (onglet Files). Ne jamais supprimer tant que le job tourne.
-	OutputFiles []string `json:"output_files,omitempty"`
-
-	Progress        *JobProgress    `json:"progress,omitempty"`
-	GPURequirements GPURequirements `json:"gpu_requirements"`
 }
 
 func jobDir(cachePath, projectID, jobID string) string {

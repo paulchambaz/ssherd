@@ -6,7 +6,7 @@ import (
 	"github.com/paulchambaz/ssherd/internal"
 )
 
-templ NewVisualizationPage(p *internal.Project) {
+templ NewVisualizationPage(p *internal.Project, formStateJSON string) {
 	@Base() {
 		@Header() {
 			<a href="/">Projects</a>
@@ -29,13 +29,13 @@ templ NewVisualizationPage(p *internal.Project) {
 			</div>
 		</div>
 		<div class="max-w-5xl mx-auto w-full px-8 mt-2 pb-12">
-			@newVizForm(p)
+			@newVizForm(p, formStateJSON)
 		</div>
 	}
 }
 
-templ newVizForm(p *internal.Project) {
-	<form id="viz-form" method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="space-y-8">
+templ newVizForm(p *internal.Project, formStateJSON string) {
+	<form id="viz-form" data-form-state={ formStateJSON } method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations") } class="space-y-8">
 		<input type="hidden" id="axes_json" name="axes_json" value="[]"/>
 		<div>
 			<div class="flex items-center justify-between mb-3">
@@ -240,6 +240,14 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 								Delete
 							</button>
 						</form>
+						if viz.FormState != nil {
+							<a
+								href={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/new?from=" + viz.ID) }
+								class="px-3 py-1.5 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100"
+							>
+								Redo
+							</a>
+						}
 					</div>
 				</div>
 				<p class="text-xs text-base-400 font-mono mt-2">{ viz.VizCommand }</p>

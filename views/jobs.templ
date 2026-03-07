@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-templ NewBatchPage(p *internal.Project, gpuModels []string) {
+templ NewBatchPage(p *internal.Project, gpuModels []string, formStateJSON string) {
 	@Base() {
 		@Header() {
 			<a href="/">Projects</a>
@@ -29,13 +29,13 @@ templ NewBatchPage(p *internal.Project, gpuModels []string) {
 			</div>
 		</div>
 		<div class="max-w-5xl mx-auto w-full px-8 mt-2 pb-12">
-			@newBatchForm(p, gpuModels)
+			@newBatchForm(p, gpuModels, formStateJSON)
 		</div>
 	}
 }
 
-templ newBatchForm(p *internal.Project, gpuModels []string) {
-	<form id="batch-form" method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="space-y-8">
+templ newBatchForm(p *internal.Project, gpuModels []string, formStateJSON string) {
+	<form id="batch-form" data-form-state={ formStateJSON } method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="space-y-8">
 		<input type="hidden" id="axes_json" name="axes_json" value="[]"/>
 		<!-- Infrastructure -->
 		<div>
@@ -339,6 +339,14 @@ templ JobDetailPage(p *internal.Project, job *internal.Job, stdoutLog string, st
 							Retry job
 						</button>
 					</form>
+				}
+				if job.FormState != nil {
+					<a
+						href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/new?from=" + job.ID) }
+						class="px-4 py-2 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100"
+					>
+						Redo this job
+					</a>
 				}
 				<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="px-4 py-2 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100">
 					← Back to jobs

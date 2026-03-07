@@ -15,13 +15,41 @@ import (
 	"github.com/paulchambaz/ssherd/views"
 )
 
+// vizFormAxisInput est le type package-level utilisé dans VizFormState.
+type vizFormAxisInput struct {
+	Name   string   `json:"name"`
+	Values []string `json:"values"`
+}
+
+// VizFormState capture les inputs du formulaire New Visualization pour le Redo.
+type VizFormState struct {
+	Name               string             `json:"name"`
+	Description        string             `json:"description"`
+	VizCommand         string             `json:"viz_command"`
+	DataPath           string             `json:"data_path"`
+	OutputFileTemplate string             `json:"output_file_template"`
+	BuildRemote        bool               `json:"build_remote"`
+	Axes               []vizFormAxisInput `json:"axes"`
+}
+
 func (s *Server) getNewVisualization(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	if err := views.NewVisualizationPage(p).Render(r.Context(), w); err != nil {
+
+	// Redo : si "from" est présent, charger le FormState de la viz source.
+	var formStateJSON string
+	if from := r.URL.Query().Get("from"); from != "" {
+		if sourceViz, err := internal.LoadVisualization(s.cfg.CachePath, p.ID, from); err == nil {
+			if sourceViz.FormState != nil {
+				formStateJSON = string(sourceViz.FormState)
+			}
+		}
+	}
+
+	if err := views.NewVisualizationPage(p, formStateJSON).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		log.Printf("Failed to render template: %v", err)
 	}
@@ -43,18 +71,20 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	description := strings.TrimSpace(r.FormValue("description"))
 	vizCommand := strings.TrimSpace(r.FormValue("viz_command"))
 	outputTemplate := strings.TrimSpace(r.FormValue("output_file_template"))
+	dataPathRaw := strings.TrimSpace(r.FormValue("data_path"))
 	if name == "" || vizCommand == "" || outputTemplate == "" {
 		http.Error(w, "Name, viz script and output template are required", http.StatusBadRequest)
 		return
 	}
 
-	type axisInput struct {
+	// Type local pour le parsing des axes soumis par le formulaire.
+	type axisInputLocal struct {
 		Name       string   `json:"name"`
 		Flag       string   `json:"flag"`
 		Values     []string `json:"values"`
 		Toggleable bool     `json:"toggleable"`
 	}
-	var axesInput []axisInput
+	var axesInput []axisInputLocal
 	if raw := r.FormValue("axes_json"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &axesInput); err != nil {
 			http.Error(w, "Invalid axes data", http.StatusBadRequest)
@@ -63,6 +93,7 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var axes []internal.VizAxis
+	var formAxes []vizFormAxisInput
 	for _, a := range axesInput {
 		var vals []string
 		for _, v := range a.Values {
@@ -75,7 +106,29 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 				Name:   strings.TrimSpace(a.Name),
 				Values: vals,
 			})
+			formAxes = append(formAxes, vizFormAxisInput{
+				Name:   strings.TrimSpace(a.Name),
+				Values: vals,
+			})
 		}
+	}
+
+	buildRemote := r.FormValue("build_remote") == "on" || r.FormValue("build_remote") == "true"
+
+	// Sérialiser le FormState avant d'appliquer absOrRelative sur data_path.
+	formState := VizFormState{
+		Name:               name,
+		Description:        description,
+		VizCommand:         vizCommand,
+		DataPath:           dataPathRaw,
+		OutputFileTemplate: outputTemplate,
+		BuildRemote:        buildRemote,
+		Axes:               formAxes,
+	}
+	formStateJSON, err := json.Marshal(formState)
+	if err != nil {
+		http.Error(w, "Failed to marshal form state", http.StatusInternalServerError)
+		return
 	}
 
 	id, err := internal.GenerateID()
@@ -84,8 +137,6 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buildRemote := r.FormValue("build_remote") == "on" || r.FormValue("build_remote") == "true"
-
 	now := time.Now()
 	viz := &internal.Visualization{
 		ID:                 id,
@@ -93,12 +144,13 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		Name:               name,
 		Description:        description,
 		VizCommand:         vizCommand,
-		DataPath:           absOrRelative(strings.TrimSpace(r.FormValue("data_path")), p.RemotePath),
+		DataPath:           absOrRelative(dataPathRaw, p.RemotePath),
 		OutputFileTemplate: outputTemplate,
 		BuildRemote:        buildRemote,
 		Axes:               axes,
 		CreatedAt:          now,
 		UpdatedAt:          now,
+		FormState:          json.RawMessage(formStateJSON),
 	}
 
 	if err := internal.SaveVisualization(s.cfg.CachePath, viz); err != nil {

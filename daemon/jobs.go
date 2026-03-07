@@ -19,6 +19,24 @@ type axisInput struct {
 	Values []string `json:"values"`
 }
 
+// BatchFormState capture l'intégralité des inputs du formulaire New Batch.
+// Sérialisé dans job.FormState à la création pour permettre le Redo.
+type BatchFormState struct {
+	NamePrefix   string      `json:"name_prefix"`
+	BaseCommand  string      `json:"base_command"`
+	SeedFlag     string      `json:"seed_flag"`
+	StartSeed    int         `json:"start_seed"`
+	NumSeeds     int         `json:"num_seeds"`
+	MaxRetries   int         `json:"max_retries"`
+	MinVRAM      int         `json:"min_vram"`
+	PreferredGPU string      `json:"preferred_gpu"`
+	RetrySuffix  string      `json:"retry_suffix"`
+	LogPath      string      `json:"log_path"`
+	OutputPath   string      `json:"output_path"`
+	OutputFiles  string      `json:"output_files"`
+	Axes         []axisInput `json:"axes"`
+}
+
 func (s *Server) getNewBatch(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
@@ -44,7 +62,17 @@ func (s *Server) getNewBatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := views.NewBatchPage(p, gpuModels).Render(r.Context(), w); err != nil {
+	// Redo : si un query param "from" est présent, charger le FormState du job source.
+	var formStateJSON string
+	if from := r.URL.Query().Get("from"); from != "" {
+		if sourceJob, err := internal.LoadJob(s.cfg.CachePath, p.ID, from); err == nil {
+			if sourceJob.FormState != nil {
+				formStateJSON = string(sourceJob.FormState)
+			}
+		}
+	}
+
+	if err := views.NewBatchPage(p, gpuModels, formStateJSON).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 		log.Printf("Failed to render template: %v", err)
 	}
@@ -91,12 +119,13 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	preferredGPU := r.FormValue("preferred_gpu")
 	retrySuffix := strings.TrimSpace(r.FormValue("retry_suffix"))
+	outputFilesRaw := r.FormValue("output_files")
 
 	logPathTpl := strings.TrimSpace(r.FormValue("log_path"))
 	outputPathTpl := strings.TrimSpace(r.FormValue("output_path"))
 
 	var outputFilesTpls []string
-	for _, line := range strings.Split(r.FormValue("output_files"), "\n") {
+	for _, line := range strings.Split(outputFilesRaw, "\n") {
 		if f := strings.TrimSpace(line); f != "" {
 			outputFilesTpls = append(outputFilesTpls, f)
 		}
@@ -108,6 +137,28 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid axes data", http.StatusBadRequest)
 			return
 		}
+	}
+
+	// Sérialiser le FormState une seule fois — partagé par tous les jobs du batch.
+	formState := BatchFormState{
+		NamePrefix:   namePrefix,
+		BaseCommand:  baseCommand,
+		SeedFlag:     seedFlag,
+		StartSeed:    startSeed,
+		NumSeeds:     numSeeds,
+		MaxRetries:   maxRetries,
+		MinVRAM:      minVRAM,
+		PreferredGPU: preferredGPU,
+		RetrySuffix:  retrySuffix,
+		LogPath:      logPathTpl,
+		OutputPath:   outputPathTpl,
+		OutputFiles:  outputFilesRaw,
+		Axes:         axes,
+	}
+	formStateJSON, err := json.Marshal(formState)
+	if err != nil {
+		http.Error(w, "Failed to marshal form state", http.StatusInternalServerError)
+		return
 	}
 
 	axisValues := make([][]string, 0, len(axes))
@@ -197,6 +248,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 					MinVRAMMB:    minVRAM,
 					PreferredGPU: preferredGPU,
 				},
+				FormState: json.RawMessage(formStateJSON),
 			}
 
 			if err := internal.SaveJob(s.cfg.CachePath, job); err != nil {
@@ -324,32 +376,6 @@ func (s *Server) postRetryJob(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
 }
 
-// absOrRelative prepends base if path is non-empty and relative.
-func absOrRelative(path, base string) string {
-	if path == "" || strings.HasPrefix(path, "/") {
-		return path
-	}
-	return base + "/" + path
-}
-
-// lastToken extracts the last whitespace-separated token from s.
-// "--env antmaze-large-play-v2" → "antmaze-large-play-v2"
-func lastToken(s string) string {
-	parts := strings.Fields(s)
-	if len(parts) == 0 {
-		return s
-	}
-	return parts[len(parts)-1]
-}
-
-// substituteVars replaces {key} placeholders in s.
-func substituteVars(s string, vars map[string]string) string {
-	for k, v := range vars {
-		s = strings.ReplaceAll(s, "{"+k+"}", v)
-	}
-	return s
-}
-
 func (s *Server) postEditJob(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
@@ -377,4 +403,26 @@ func (s *Server) postEditJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
+}
+
+func absOrRelative(path, base string) string {
+	if path == "" || strings.HasPrefix(path, "/") {
+		return path
+	}
+	return base + "/" + path
+}
+
+func lastToken(s string) string {
+	parts := strings.Fields(s)
+	if len(parts) == 0 {
+		return s
+	}
+	return parts[len(parts)-1]
+}
+
+func substituteVars(s string, vars map[string]string) string {
+	for k, v := range vars {
+		s = strings.ReplaceAll(s, "{"+k+"}", v)
+	}
+	return s
 }
