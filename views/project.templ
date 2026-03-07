@@ -44,7 +44,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 }
 
 templ projectTabs(p *internal.Project, active internal.ProjectTab) {
-	<nav class="flex border-b border-base-300 overflow-x-auto">
+	<nav class="flex border-b border-base-300 overflow-x-auto whitespace-nowrap">
 		@projectTabLink("/projects/"+p.Slug, "Dashboard", active == internal.TabDashboard)
 		@projectTabLink("/projects/"+p.Slug+"/jobs", "Jobs", active == internal.TabJobs)
 		@projectTabLink("/projects/"+p.Slug+"/visualizations", "Visualizations", active == internal.TabVisualizations)
