@@ -22,7 +22,7 @@
           tailwindcss_4
         ];
 
-        runPkgs = with pkgs; [
+        dockerPkgs = with pkgs; [
           nix
           busybox
         ];
@@ -40,7 +40,7 @@
           src = ./.;
           vendorHash = "sha256-j+wTXFuMlALs82PdAhZsm6LBtFr4a9MBqJuaFvIN92o=";
 
-          nativeBuildInputs = buildPkgs ++ runPkgs;
+          nativeBuildInputs = buildPkgs;
 
           postPatch = ''
             tailwindcss --input static/css/main.css --output static/css/styles.css --minify --optimize
@@ -67,7 +67,11 @@
           docker = pkgs.dockerTools.buildImage {
             name = "ssherd";
             tag = "latest";
-            contents = runPkgs;
+            copyToRoot = pkgs.buildEnv {
+              name = "ssherd-env";
+              paths = dockerPkgs;
+              pathsToLink = [ "/bin" ];
+            };
             extraCommands = ''
               mkdir -p var/log/ssherd
               chmod 755 var/log/ssherd
@@ -77,14 +81,12 @@
               ExposedPorts = {
                 "1321/tcp" = { };
               };
-              Env = [
-                "SSHERD_SERVER_HOST=0.0.0.0"
-              ];
+              Env = [ "SSHERD_SERVER_HOST=0.0.0.0" ];
             };
           };
         };
         devShell = pkgs.mkShell {
-          nativeBuildInputs = buildPkgs ++ runPkgs;
+          nativeBuildInputs = buildPkgs;
           buildInputs = devPkgs;
         };
       }
