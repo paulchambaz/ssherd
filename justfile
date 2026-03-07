@@ -20,7 +20,7 @@ watch-go:
   @air
 
 build:
-  @tailwindcss --input static/css/main.css --ouput static/css/styles.css --minify --optimize
+  @tailwindcss --input static/css/main.css --output static/css/styles.css --minify --optimize
   @templ generate
   @go build -o bin/ssherd ./ssherd
   @scdoc < ssherd.1.scd | sed "s/1980-01-01/$(date '+%B %Y')/" > bin/ssherd.1

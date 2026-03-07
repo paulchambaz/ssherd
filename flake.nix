@@ -24,6 +24,7 @@
 
         runPkgs = with pkgs; [
           nix
+          busybox
         ];
 
         devPkgs = with pkgs; [
@@ -37,12 +38,12 @@
           pname = "ssherd";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-RvoYqSLlMtiUOy9g7102qbH6LMMD+PZpDXSBNcvXatE=";
+          vendorHash = "sha256-j+wTXFuMlALs82PdAhZsm6LBtFr4a9MBqJuaFvIN92o=";
 
           nativeBuildInputs = buildPkgs ++ runPkgs;
 
           postPatch = ''
-            tailwindcss --input static/css/main.css --ouput static/css/styles.css --minify --optimize
+            tailwindcss --input static/css/main.css --output static/css/styles.css --minify --optimize
             templ generate
           '';
 
@@ -66,13 +67,11 @@
           docker = pkgs.dockerTools.buildImage {
             name = "ssherd";
             tag = "latest";
-
+            contents = runPkgs;
             extraCommands = ''
-              mkdir -p var/log/ssherd etc/ssherd
+              mkdir -p var/log/ssherd
               chmod 755 var/log/ssherd
-              touch etc/ssherd/ssherd.cfg
             '';
-
             config = {
               Cmd = [ "${ssherd}/dist/usr/bin/ssherd" ];
               ExposedPorts = {

@@ -37,17 +37,17 @@ func defaultConfig() Config {
 
 func LoadConfig(configPath string) (Config, error) {
 	config := defaultConfig()
-
-	if _, err := toml.DecodeFile(configPath, &config); err != nil {
-		return Config{}, err
+	if configPath != "" {
+		if _, err := os.Stat(configPath); err == nil {
+			if _, err := toml.DecodeFile(configPath, &config); err != nil {
+				return Config{}, err
+			}
+		}
 	}
-
 	config.loadFromEnv()
-
 	if err := config.validate(); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
-
 	return config, nil
 }
 
