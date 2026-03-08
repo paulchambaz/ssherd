@@ -2,7 +2,6 @@ package views
 
 import (
 	"fmt"
-
 	"github.com/paulchambaz/ssherd/internal"
 )
 
@@ -178,7 +177,11 @@ templ newVizForm(p *internal.Project, formStateJSON string) {
 	</form>
 }
 
-templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, jobsWriting bool, genError string) {
+// VisualizationDetailPage affiche la page de détail d'une visualisation.
+// generating indique que l'utilisateur vient de déclencher une génération
+// (via ?generating=true) : le spinner est affiché dès le chargement de la page
+// et disparaît lorsque l'événement WebSocket de fin de génération arrive.
+templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, jobsWriting bool, generating bool) {
 	@Base() {
 		@Header() {
 			<a href="/">Projects</a>
@@ -197,7 +200,6 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 					<span class="text-base-700">{ viz.Name }</span>
 				</div>
 				<div class="flex items-start justify-between gap-6">
-					<!-- Formulaire d'édition name/description -->
 					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="flex-1 min-w-0 space-y-1">
 						<div class="flex items-center gap-3">
 							<input
@@ -219,7 +221,6 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 							class="text-sm text-base-500 bg-transparent focus:outline-none focus:border-b focus:border-accent-400 w-full placeholder:text-base-300"
 						/>
 					</form>
-					<!-- Boutons generate/delete -->
 					<div class="flex items-center gap-2 shrink-0">
 						<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID + "/generate") } class="flex items-center gap-1">
 							<select name="mode" class="text-xs border border-base-300 rounded px-2 py-1.5 bg-base-50 focus:outline-none">
@@ -288,17 +289,21 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 					</div>
 				</div>
 			</div>
+			<!-- Viewer principal -->
 			<div
 				class="border border-base-300 rounded-md overflow-hidden"
 				id="viz-viewer"
+				data-viz-id={ viz.ID }
 				data-axes={ vizToggleAxesJSON(viz) }
 				data-file-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/file" }
 				data-jobs-writing={ func() string { if jobsWriting { return "true" }; return "false" }() }
+				data-generating={ func() string { if generating { return "true" }; return "false" }() }
 			>
 				<div id="viz-controls" class="px-4 py-3 border-b border-base-300 bg-base-50 space-y-2 hidden"></div>
 				<div class="px-4 py-6 flex flex-col items-center justify-center min-h-[300px] bg-base-50" id="viz-output-container">
 					<img id="viz-output-img" src="" alt="Visualization" class="max-w-full hidden"/>
-					<div id="viz-output-placeholder" class={ templ.KV("hidden", genError != ""), "text-center text-base-400 text-sm space-y-2" }>
+					<!-- Placeholder : "pas encore généré" -->
+					<div id="viz-output-placeholder" class={ "text-center text-base-400 text-sm space-y-2", templ.KV("hidden", generating) }>
 						<p>No output generated yet.</p>
 						<p class="text-xs">
 							if jobsWriting {
@@ -308,19 +313,19 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 							}
 						</p>
 					</div>
-					if genError != "" {
-						<div id="viz-output-error" class="w-full">
-							<div class="text-xs font-semibold text-red-500 mb-2">Generation failed</div>
-							<pre class="text-xs font-mono border border-red-500 text-red-500 bg-red-500/10 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">{ genError }</pre>
-						</div>
-					} else {
-						<div id="viz-output-error" class="text-center text-red-400 text-sm hidden">
-							Failed to load output file.
-						</div>
-					}
+					<!-- Spinner : génération en cours -->
+					<div id="viz-output-spinner" class={ "flex flex-col items-center gap-4 text-base-400", templ.KV("hidden", !generating) }>
+						<div class="w-8 h-8 border-2 border-base-300 border-t-accent-500 rounded-full animate-spin"></div>
+						<span class="text-sm">Generating…</span>
+					</div>
+					<!-- Erreur : remplie par JS via WebSocket -->
+					<div id="viz-output-error" class="w-full hidden">
+						<div class="text-xs font-semibold text-red-500 mb-2">Generation failed</div>
+						<pre id="viz-output-error-msg" class="text-xs font-mono border border-red-500 text-red-500 bg-red-500/10 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all"></pre>
+					</div>
 				</div>
 				<div class="flex items-center justify-between px-4 py-2 border-t border-base-300 bg-base-50">
-					<button id="viz-copy-png" type="button" class="text-xs text-accent-500 hover:underline flex items-center gap-1.5">
+					<button id="viz-copy-png" type="button" class="text-xs text-accent-500 hover:underline flex items-center gap-1.5 hidden">
 						<span class="icon-copy !size-3.5"></span>
 						Copy PNG
 					</button>
@@ -330,6 +335,10 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 					</div>
 				</div>
 			</div>
+			<!-- Récepteur OOB WebSocket pour les événements de génération.
+			     Partagé par tous les combos de cette viz (data-combo-key change à chaque swap).
+			     Le JS lit data-timestamp pour détecter les mises à jour. -->
+			<div id={ "viz-result-" + viz.ID } hidden></div>
 		</div>
 	}
 }

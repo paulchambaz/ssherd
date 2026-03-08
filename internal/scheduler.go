@@ -24,16 +24,15 @@ type Scheduler struct {
 	machineStates map[string]*MachineState
 	syncDirty     map[string]bool
 
-	// finalizingJobs empêche deux goroutines de finaliser le même job
-	// simultanément (race condition entre syncProgress à 100% et checkJob).
 	finalizingMu   sync.Mutex
 	finalizingJobs map[string]bool
+
+	generatingVizsMu sync.Mutex
+	generatingVizs   map[string]bool
 
 	syncMuMu sync.Mutex
 	syncMu   map[string]*sync.Mutex
 
-	// wasRunning est vrai si des jobs tournaient au tick précédent du monitor.
-	// Utilisé pour détecter la transition "tous les jobs sont terminés".
 	wasRunning bool
 
 	Events chan JobEvent
@@ -116,6 +115,7 @@ func NewScheduler(cfg SchedulerConfig, cachePath string) (*Scheduler, error) {
 		machineStates:  machineStates,
 		syncDirty:      make(map[string]bool),
 		finalizingJobs: make(map[string]bool),
+		generatingVizs: make(map[string]bool),
 		Events:         make(chan JobEvent, 256),
 	}, nil
 }
@@ -141,8 +141,6 @@ func (s *Scheduler) GetConfig() SchedulerConfig {
 
 // ─── Ntfy ─────────────────────────────────────────────────────────────────────
 
-// notify envoie un message à l'instance ntfy configurée.
-// Non bloquant : lancé dans une goroutine par les appelants.
 func (s *Scheduler) notify(title, msg string) {
 	cfg := s.getConfig()
 	if cfg.NtfyURL == "" || cfg.NtfyChannel == "" {
@@ -187,6 +185,50 @@ func (s *Scheduler) emit(kind EventKind, job *Job) {
 	}
 }
 
+func (s *Scheduler) emitViz(vizID, projectID, projectSlug, comboKey, vizErr string) {
+	select {
+	case s.Events <- JobEvent{
+		Kind:        EventVizDone,
+		VizID:       vizID,
+		ProjectID:   projectID,
+		ProjectSlug: projectSlug,
+		ComboKey:    comboKey,
+		VizErr:      vizErr,
+	}:
+	default:
+	}
+}
+
+// ─── Viz generating guard ─────────────────────────────────────────────────────
+
+// tryMarkVizGenerating returns true and marks the combo as generating if it was
+// not already in progress. Returns false if the combo is already being generated.
+func (s *Scheduler) tryMarkVizGenerating(vizID, comboKey string) bool {
+	key := vizID + "/" + comboKey
+	s.generatingVizsMu.Lock()
+	defer s.generatingVizsMu.Unlock()
+	if s.generatingVizs[key] {
+		return false
+	}
+	s.generatingVizs[key] = true
+	return true
+}
+
+func (s *Scheduler) clearVizGenerating(vizID, comboKey string) {
+	s.generatingVizsMu.Lock()
+	delete(s.generatingVizs, vizID+"/"+comboKey)
+	s.generatingVizsMu.Unlock()
+}
+
+// IsVizGenerating is used by the WebSocket snapshot to report in-progress combos.
+func (s *Scheduler) IsVizGenerating(vizID, comboKey string) bool {
+	s.generatingVizsMu.Lock()
+	defer s.generatingVizsMu.Unlock()
+	return s.generatingVizs[vizID+"/"+comboKey]
+}
+
+// ─── Lifecycle ────────────────────────────────────────────────────────────────
+
 func (s *Scheduler) Start() {
 	go s.dispatchLoop()
 	go s.monitorLoop()
@@ -228,7 +270,6 @@ func (s *Scheduler) dispatchTick() {
 		return
 	}
 
-	// Compter uniquement les machines non deprecated pour le calcul du ratio.
 	usableMachines := 0
 	for _, m := range store.Machines {
 		if m.Status != MachineStatusDeprecated {
@@ -334,7 +375,7 @@ func (s *Scheduler) findAvailableMachine(store *MachinesStore, req GPURequiremen
 	return fallback
 }
 
-// ─── Lancement ────────────────────────────────────────────────────────────────
+// ─── Launch ───────────────────────────────────────────────────────────────────
 
 func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, store *MachinesStore) {
 	log.Printf("scheduler: launchJob: start job=%s machine=%s", job.ID, machine.Name)
@@ -488,7 +529,6 @@ func (s *Scheduler) monitorLoop() {
 		}
 		s.mu.RUnlock()
 
-		// Détecter la transition "des jobs tournaient, maintenant c'est fini".
 		nowRunning := len(running) > 0
 		if s.wasRunning && !nowRunning {
 			go s.notify("ssherd", "All jobs finished")
@@ -582,7 +622,6 @@ func (s *Scheduler) openWatcher(running []*Job) (*Client, string, error) {
 func (s *Scheduler) checkJob(watcher *Client, job *Job) error {
 	log.Printf("scheduler: checkJob: start job=%s (%s)", job.ID, job.DisplayName)
 
-	// Guard : si ce job est déjà en cours de finalisation, on saute.
 	s.finalizingMu.Lock()
 	if s.finalizingJobs[job.ID] {
 		s.finalizingMu.Unlock()
@@ -603,8 +642,6 @@ func (s *Scheduler) checkJob(watcher *Client, job *Job) error {
 	switch status {
 	case "done":
 		s.markFinalizing(job.ID)
-		// Forcer une dernière synchro de progression avant de finaliser
-		// pour éviter qu'un job à 100% reste sans finished_at.
 		s.syncProgress(watcher, job)
 		log.Printf("scheduler: checkJob: job=%s done — finalizing", job.ID)
 		s.finalizeJobInline(watcher, job, localJobDir, JobDone)
@@ -659,15 +696,12 @@ func (s *Scheduler) checkJob(watcher *Client, job *Job) error {
 	return nil
 }
 
-// markFinalizing enregistre qu'un job est en cours de finalisation.
-// Doit être appelé avant finalizeJobInline pour garantir l'exclusion mutuelle.
 func (s *Scheduler) markFinalizing(jobID string) {
 	s.finalizingMu.Lock()
 	s.finalizingJobs[jobID] = true
 	s.finalizingMu.Unlock()
 }
 
-// clearFinalizing est appelé à la fin de finalizeJobInline.
 func (s *Scheduler) clearFinalizing(jobID string) {
 	s.finalizingMu.Lock()
 	delete(s.finalizingJobs, jobID)
@@ -995,15 +1029,12 @@ func (s *Scheduler) SyncRepoNow(projectID string) error {
 // ─── Finalization ─────────────────────────────────────────────────────────────
 
 func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir string, status JobStatus) {
-	// Toujours libérer le verrou de finalisation à la sortie.
 	defer s.clearFinalizing(job.ID)
 
 	if err := watcher.FinalizeLogsToLocal(job.NfsJobDir, localJobDir); err != nil {
 		log.Printf("scheduler: finalize: logs copy failed for job %s: %v", job.ID, err)
 	}
 
-	// Nettoyer les output files sur NFS (déjà copiés localement) uniquement
-	// pour les jobs terminés avec succès.
 	if status == JobDone && len(job.OutputFiles) > 0 {
 		if err := watcher.DeleteOutputFiles(job.OutputFiles); err != nil {
 			log.Printf("scheduler: finalize: cleanup output files for job %s: %v", job.ID, err)
@@ -1022,7 +1053,6 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 	now := time.Now()
 
 	if status == "" {
-		// Stall
 		if job.RetryCount < job.MaxRetries {
 			job.Status = JobPending
 			job.RetryCount++
@@ -1056,7 +1086,6 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 
 	s.mu.Unlock()
 
-	// Notification ntfy pour les jobs échoués.
 	if status == JobFailed {
 		go s.notify("ssherd — job failed", job.DisplayName+" failed")
 	}

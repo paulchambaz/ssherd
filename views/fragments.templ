@@ -2,29 +2,25 @@ package views
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/paulchambaz/ssherd/internal"
 )
 
-// JobRowFragment est envoyé via WebSocket pour mettre à jour une ligne de la
-// liste des jobs. hx-swap-oob="true" demande à htmx de cibler l'élément
-// existant par son id et de le remplacer par outerHTML.
-// Les clients qui ne sont pas sur la page /jobs ignorent ce swap silencieusement.
+// JobRowFragment met à jour une ligne de la liste des jobs via OOB swap.
 templ JobRowFragment(job *internal.Job) {
 	<div id={ "job-row-" + job.ID } hx-swap-oob="true" class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
 		@jobRowCells(job)
 	</div>
 }
 
-// JobProgressFragment met à jour la section progression sur la page de détail
-// d'un job. Les clients sur d'autres pages ignorent ce swap.
+// JobProgressFragment met à jour la section progression sur la page de détail.
 templ JobProgressFragment(job *internal.Job) {
 	<div id={ "job-progress-" + job.ID } hx-swap-oob="true" class="border border-base-300 rounded-md px-4 py-4 space-y-3">
 		@jobProgressContent(job)
 	</div>
 }
 
-// jobRowCells est partagé entre la liste des jobs et JobRowFragment.
-// job.ProjectSlug est utilisé pour construire l'URL sans avoir à passer le projet.
 templ jobRowCells(job *internal.Job) {
 	<div class="min-w-0 pr-2" title={ job.DisplayName }>
 		<a href={ templ.SafeURL("/projects/" + job.ProjectSlug + "/jobs/" + job.ID) } class="font-medium hover:text-accent-600 truncate block">
@@ -51,7 +47,6 @@ templ jobRowCells(job *internal.Job) {
 	</div>
 }
 
-// inlineProgressBar est la mini progress bar dans la liste des jobs.
 templ inlineProgressBar(job *internal.Job) {
 	if job.Status == internal.JobDone {
 		<div class="flex items-center gap-2 w-32">
@@ -72,8 +67,6 @@ templ inlineProgressBar(job *internal.Job) {
 	}
 }
 
-// jobProgressContent est le corps de la section progression, partagé entre la
-// page de détail et JobProgressFragment.
 templ jobProgressContent(job *internal.Job) {
 	if job.Progress != nil || job.Status == internal.JobDone {
 		{{
@@ -108,7 +101,7 @@ templ jobProgressContent(job *internal.Job) {
 		</div>
 		<div class="w-full bg-base-200 rounded-full h-2">
 			<div
-				class={ "h-2 rounded-full transition-all bg-accent-500" }
+				class="h-2 rounded-full transition-all bg-accent-500"
 				style={ fmt.Sprintf("width: %.2f%%", clampPercent(percent)) }
 			></div>
 		</div>
@@ -141,6 +134,28 @@ templ JobLogsFragment(job *internal.Job, stdoutLog, stderrLog string) {
 			<span class="text-base-400">No stderr output.</span>
 		}
 	</div>
+}
+
+// VizResultFragment est envoyé via WebSocket quand un combo de visualisation
+// termine (succès ou erreur) ou est en cours de génération.
+//
+// vizErr :
+//   - ""           → succès, le fichier est disponible
+//   - "generating" → génération en cours, afficher le spinner
+//   - autre        → message d'erreur
+//
+// Tous les combos d'une même viz partagent le même id DOM — chaque swap
+// remplace le précédent. Le JS lit data-combo-key et data-timestamp pour
+// discriminer les mises à jour.
+templ VizResultFragment(vizID, comboKey, vizErr string) {
+	<div
+		id={ "viz-result-" + vizID }
+		hx-swap-oob="true"
+		hidden
+		data-combo-key={ comboKey }
+		data-error={ vizErr }
+		data-timestamp={ fmt.Sprintf("%d", time.Now().UnixMilli()) }
+	></div>
 }
 
 func clampPercent(p float64) float64 {

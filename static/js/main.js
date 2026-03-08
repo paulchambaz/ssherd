@@ -642,28 +642,58 @@ onReady(() => {
   updateVizPreview();
 });
 
-// ─── Viz viewer (page detail visualisation) ──────────────────────────────────
+// ─── Viz viewer (page detail visualisation) ───────────────────────────────────
+//
+// Gestion du viewer interactif et des mises à jour WebSocket asynchrones.
+//
+// État du viewer :
+//   selection        : {axisName → valeur courante} — détermine quelle image charger
+//   availableCombos  : Set des comboKeys dont le fichier de sortie est connu disponible
+//   currentComboKey  : comboKey correspondant à la sélection courante
+//
+// Événement WebSocket : htmx swap l'élément #viz-result-{vizID} avec les
+// attributs data-combo-key, data-error, data-timestamp. On observe les mutations
+// via MutationObserver pour réagir à chaque swap.
 onReady(() => {
   const viewer = document.getElementById("viz-viewer");
   if (!viewer) return;
 
+  const vizId = viewer.dataset.vizId;
   const axes = JSON.parse(viewer.dataset.axes || "[]");
   const fileBaseUrl = viewer.dataset.fileUrl;
 
   const controls = document.getElementById("viz-controls");
   const img = document.getElementById("viz-output-img");
   const placeholder = document.getElementById("viz-output-placeholder");
+  const spinner = document.getElementById("viz-output-spinner");
   const errorEl = document.getElementById("viz-output-error");
-  const downloadLink = document.getElementById("viz-download-link");
-  const label = document.getElementById("viz-output-label");
+  const errorMsg = document.getElementById("viz-output-error-msg");
+  const downloadSvg = document.getElementById("viz-download-svg");
+  const downloadPng = document.getElementById("viz-download-png");
+  const copyBtn = document.getElementById("viz-copy-png");
 
-  const hadServerError = !errorEl.classList.contains("hidden");
+  // Combos dont le fichier est connu disponible (peuplé par les fragments WS).
+  const availableCombos = new Set();
 
+  // Sélection courante : première valeur de chaque axe par défaut.
   const selection = {};
   axes.forEach((ax) => {
     if (ax.values && ax.values.length > 0) selection[ax.name] = ax.values[0];
   });
 
+  // ── Calcul du comboKey JS (doit correspondre à la logique Go) ────────────
+  // Go : indices séparés par "-", dans l'ordre des axes.
+  function currentComboKey() {
+    if (axes.length === 0) return "default";
+    return axes
+      .map((ax) => {
+        const idx = ax.values.indexOf(selection[ax.name]);
+        return String(idx >= 0 ? idx : 0);
+      })
+      .join("-");
+  }
+
+  // ── Construction des contrôles d'axes ────────────────────────────────────
   if (axes.length > 0) {
     controls.classList.remove("hidden");
     axes.forEach((ax) => {
@@ -718,79 +748,158 @@ onReady(() => {
     return fileBaseUrl + (qs ? "?" + qs : "");
   }
 
-  function loadOutput() {
-    const url = buildUrl();
+  // ── États visuels ─────────────────────────────────────────────────────────
+
+  function showSpinner() {
     img.classList.add("hidden");
     placeholder.classList.add("hidden");
-    if (!hadServerError) errorEl.classList.add("hidden");
-    if (label) label.textContent = "";
-    if (downloadLink) downloadLink.classList.add("hidden");
+    errorEl.classList.add("hidden");
+    spinner.classList.remove("hidden");
+    if (downloadSvg) downloadSvg.classList.add("hidden");
+    if (downloadPng) downloadPng.classList.add("hidden");
+    if (copyBtn) copyBtn.classList.add("hidden");
+  }
+
+  function showPlaceholder() {
+    img.classList.add("hidden");
+    spinner.classList.add("hidden");
+    errorEl.classList.add("hidden");
+    placeholder.classList.remove("hidden");
+    if (downloadSvg) downloadSvg.classList.add("hidden");
+    if (downloadPng) downloadPng.classList.add("hidden");
+    if (copyBtn) copyBtn.classList.add("hidden");
+  }
+
+  function showError(msg) {
+    img.classList.add("hidden");
+    spinner.classList.add("hidden");
+    placeholder.classList.add("hidden");
+    errorEl.classList.remove("hidden");
+    if (errorMsg) errorMsg.textContent = msg;
+    if (downloadSvg) downloadSvg.classList.add("hidden");
+    if (downloadPng) downloadPng.classList.add("hidden");
+    if (copyBtn) copyBtn.classList.add("hidden");
+  }
+
+  function showImage(url) {
+    spinner.classList.add("hidden");
+    placeholder.classList.add("hidden");
+    errorEl.classList.add("hidden");
+
+    const svgUrl = url;
+    const pngUrl = url + (url.includes("?") ? "&" : "?") + "format=png";
+
+    img.src = svgUrl + (svgUrl.includes("?") ? "&" : "?") + "_t=" + Date.now();
+    img.onload = () => img.classList.remove("hidden");
+    img.onerror = () => showError("Failed to load output file.");
+
+    if (downloadSvg) {
+      downloadSvg.href = svgUrl;
+      downloadSvg.classList.remove("hidden");
+    }
+    if (downloadPng) {
+      downloadPng.href = pngUrl;
+      downloadPng.classList.remove("hidden");
+    }
+    if (copyBtn) {
+      copyBtn.classList.remove("hidden");
+      copyBtn.onclick = async () => {
+        try {
+          const resp = await fetch(pngUrl);
+          if (!resp.ok) throw new Error("PNG not available");
+          const blob = await resp.blob();
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": blob }),
+          ]);
+          const prev = copyBtn.innerHTML;
+          copyBtn.innerHTML = "Copied!";
+          setTimeout(() => {
+            copyBtn.innerHTML = prev;
+          }, 2000);
+        } catch {
+          const prev = copyBtn.innerHTML;
+          copyBtn.innerHTML = "Failed";
+          setTimeout(() => {
+            copyBtn.innerHTML = prev;
+          }, 2000);
+        }
+      };
+    }
+  }
+
+  // ── Chargement de l'image courante ────────────────────────────────────────
+
+  function loadOutput() {
+    const key = currentComboKey();
+    const url = buildUrl();
+
+    // Si ce combo est connu comme disponible, on tente directement.
+    // Sinon on fait un HEAD pour vérifier.
+    if (availableCombos.has(key)) {
+      showImage(url);
+      return;
+    }
 
     fetch(url, { method: "HEAD" })
       .then((res) => {
         if (!res.ok) {
-          if (!hadServerError) placeholder.classList.remove("hidden");
+          showPlaceholder();
           return;
         }
-        errorEl.classList.add("hidden");
-        img.src = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
-        img.onload = () => img.classList.remove("hidden");
-        img.onerror = () => {
-          img.classList.add("hidden");
-          errorEl.classList.remove("hidden");
-        };
-        if (label) {
-          const parts = Object.entries(selection).map(([k, v]) => k + "=" + v);
-          label.textContent = parts.length > 0 ? parts.join(" · ") : "default";
-        }
-
-        const svgLink = document.getElementById("viz-download-svg");
-        const pngLink = document.getElementById("viz-download-png");
-        const copyBtn = document.getElementById("viz-copy-png");
-
-        if (svgLink) {
-          svgLink.href = url;
-          svgLink.classList.remove("hidden");
-        }
-        if (pngLink) {
-          const pngUrl = url + (url.includes("?") ? "&" : "?") + "format=png";
-          pngLink.href = pngUrl;
-          pngLink.classList.remove("hidden");
-        }
-        if (copyBtn) {
-          copyBtn.classList.remove("hidden");
-          copyBtn.onclick = async () => {
-            try {
-              const pngUrl =
-                url + (url.includes("?") ? "&" : "?") + "format=png";
-              const resp = await fetch(pngUrl);
-              if (!resp.ok) throw new Error("PNG not available");
-              const blob = await resp.blob();
-              await navigator.clipboard.write([
-                new ClipboardItem({ "image/png": blob }),
-              ]);
-              const prev = copyBtn.innerHTML;
-              copyBtn.innerHTML = "Copied!";
-              setTimeout(() => {
-                copyBtn.innerHTML = prev;
-              }, 2000);
-            } catch (e) {
-              const prev = copyBtn.innerHTML;
-              copyBtn.innerHTML = "Failed";
-              setTimeout(() => {
-                copyBtn.innerHTML = prev;
-              }, 2000);
-            }
-          };
-        }
+        availableCombos.add(key);
+        showImage(url);
       })
-      .catch(() => {
-        errorEl.classList.remove("hidden");
-      });
+      .catch(() => showPlaceholder());
   }
 
+  // ── Réception des événements WebSocket via MutationObserver ───────────────
+  //
+  // htmx-ext-ws fait un OOB swap sur #viz-result-{vizID} à chaque EventVizDone.
+  // On observe les changements d'attributs de cet élément pour réagir.
+  const resultEl = document.getElementById("viz-result-" + vizId);
+  if (resultEl) {
+    const observer = new MutationObserver(() => {
+      const comboKey = resultEl.dataset.comboKey || "";
+      const vizErr = resultEl.dataset.error || "";
+      const isCurrent = comboKey === currentComboKey();
+
+      if (vizErr === "generating") {
+        if (isCurrent) showSpinner();
+        // Pour les combos non courants on note juste qu'ils sont en cours —
+        // rien à afficher, mais on ne les marque pas encore disponibles.
+        return;
+      }
+
+      if (vizErr !== "") {
+        // Erreur de génération.
+        if (isCurrent) showError(vizErr);
+        return;
+      }
+
+      // Succès : marquer le combo disponible.
+      availableCombos.add(comboKey);
+      if (isCurrent) {
+        showImage(buildUrl());
+      }
+      // Si ce n'est pas le combo courant, le fichier est disponible pour
+      // quand l'utilisateur changera la sélection — loadOutput() le trouvera
+      // dans availableCombos et n'aura pas besoin de faire un HEAD.
+    });
+    observer.observe(resultEl, { attributes: true });
+  }
+
+  // ── Initialisation ────────────────────────────────────────────────────────
+
   updateButtons();
-  loadOutput();
+
+  // Si ?generating=true était dans l'URL, le spinner est déjà visible côté
+  // HTML (data-generating="true"). On l'affiche immédiatement ici aussi pour
+  // le cas où le snapshot WebSocket arrive avant le DOMContentLoaded.
+  if (viewer.dataset.generating === "true") {
+    showSpinner();
+  } else {
+    loadOutput();
+  }
 });
 
 window.copyBatchPreview = function() {

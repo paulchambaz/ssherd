@@ -5,7 +5,6 @@ import (
 	"log"
 	"mime"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,13 +14,11 @@ import (
 	"github.com/paulchambaz/ssherd/views"
 )
 
-// vizFormAxisInput est le type package-level utilisé dans VizFormState.
 type vizFormAxisInput struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`
 }
 
-// VizFormState capture les inputs du formulaire New Visualization pour le Redo.
 type VizFormState struct {
 	Name               string             `json:"name"`
 	Description        string             `json:"description"`
@@ -39,7 +36,6 @@ func (s *Server) getNewVisualization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redo : si "from" est présent, charger le FormState de la viz source.
 	var formStateJSON string
 	if from := r.URL.Query().Get("from"); from != "" {
 		if sourceViz, err := internal.LoadVisualization(s.cfg.CachePath, p.ID, from); err == nil {
@@ -77,7 +73,6 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Type local pour le parsing des axes soumis par le formulaire.
 	type axisInputLocal struct {
 		Name       string   `json:"name"`
 		Flag       string   `json:"flag"`
@@ -115,7 +110,6 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 
 	buildRemote := r.FormValue("build_remote") == "on" || r.FormValue("build_remote") == "true"
 
-	// Sérialiser le FormState avant d'appliquer absOrRelative sur data_path.
 	formState := VizFormState{
 		Name:               name,
 		Description:        description,
@@ -174,8 +168,8 @@ func (s *Server) getVisualizationDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	jobsWriting := s.scheduler.VizJobsWriting(p, viz)
-	genError := r.URL.Query().Get("gen_error")
-	if err := views.VisualizationDetailPage(p, viz, jobsWriting, genError).Render(r.Context(), w); err != nil {
+	generating := r.URL.Query().Get("generating") == "true"
+	if err := views.VisualizationDetailPage(p, viz, jobsWriting, generating).Render(r.Context(), w); err != nil {
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 	}
 }
@@ -227,6 +221,10 @@ func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// postGenerateVisualization lance la génération de façon asynchrone et redirige
+// immédiatement vers la page de détail avec ?generating=true. L'UI affiche un
+// spinner ; les événements WebSocket mettent à jour le viewer à la fin de chaque
+// combo sans rechargement de page.
 func (s *Server) postGenerateVisualization(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
@@ -248,16 +246,8 @@ func (s *Server) postGenerateVisualization(w http.ResponseWriter, r *http.Reques
 		mode = "auto"
 	}
 
-	ok, genErr := s.scheduler.GenerateVizNow(p, viz, mode)
-	base := "/projects/" + p.Slug + "/visualizations/" + viz.ID
-	if genErr != nil && ok == 0 {
-		http.Redirect(w, r, base+"?gen_error="+url.QueryEscape(genErr.Error()), http.StatusSeeOther)
-		return
-	}
-	if genErr != nil {
-		log.Printf("viz: GenerateVizNow partial failure (%d ok): %v", ok, genErr)
-	}
-	http.Redirect(w, r, base, http.StatusSeeOther)
+	s.scheduler.GenerateVizNow(p, viz, mode)
+	http.Redirect(w, r, "/projects/"+p.Slug+"/visualizations/"+viz.ID+"?generating=true", http.StatusSeeOther)
 }
 
 func (s *Server) postDeleteVisualization(w http.ResponseWriter, r *http.Request) {

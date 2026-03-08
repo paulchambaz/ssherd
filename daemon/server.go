@@ -46,22 +46,34 @@ func (s *Server) Run() {
 	}
 }
 
-// relayEvents lit le canal Events du scheduler, rend les fragments HTML et les
-// diffuse à tous les clients WebSocket connectés. Les deux fragments sont
-// envoyés dans un seul message : htmx-ext-ws applique les deux OOB swaps en
-// une passe, ce qui évite des flash visuels.
+// relayEvents lit le canal Events du scheduler et diffuse les fragments HTML
+// à tous les clients WebSocket connectés.
 //
-// Les clients dont le DOM ne contient pas l'élément cible ignorent silencieusement
-// le swap (comportement natif de htmx hx-swap-oob).
+// Pour les événements de jobs (status, progress) : deux fragments sont envoyés
+// dans un seul message — JobRowFragment (liste) et JobProgressFragment (détail).
+// Les clients sur d'autres pages ignorent silencieusement le swap OOB.
+//
+// Pour les événements de viz (viz_done) : un VizResultFragment est envoyé.
+// Il cible #viz-result-{vizID} qui n'existe que sur la page de détail de cette
+// viz ; les autres pages ignorent le swap.
 func (s *Server) relayEvents() {
 	for event := range s.scheduler.Events {
 		var buf bytes.Buffer
-		// Fragment liste (page /jobs) — cible : #job-row-{id}
+
+		if event.Kind == internal.EventVizDone {
+			if err := views.VizResultFragment(event.VizID, event.ComboKey, event.VizErr).Render(context.Background(), &buf); err != nil {
+				log.Printf("relay: render viz result: %v", err)
+				continue
+			}
+			s.hub.Broadcast(buf.String())
+			continue
+		}
+
+		// Événements de jobs
 		if err := views.JobRowFragment(event.Job).Render(context.Background(), &buf); err != nil {
 			log.Printf("relay: render job row: %v", err)
 			continue
 		}
-		// Fragment progression (page /jobs/{id}) — cible : #job-progress-{id}
 		if err := views.JobProgressFragment(event.Job).Render(context.Background(), &buf); err != nil {
 			log.Printf("relay: render job progress: %v", err)
 			continue

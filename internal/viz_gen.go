@@ -12,6 +12,8 @@ import (
 )
 
 // vizLoop tourne toutes les VizInterval et régénère les visualisations périmées.
+// Chaque combo est lancé dans une goroutine dédiée via vizTickOne — la boucle
+// principale ne bloque plus pendant l'exécution des scripts.
 func (s *Scheduler) vizLoop() {
 	for {
 		time.Sleep(s.getConfig().VizInterval)
@@ -45,7 +47,6 @@ func (s *Scheduler) vizTickProject(project *Project) {
 	}
 	s.mu.RUnlock()
 
-	// Pas de jobs connus pour ce projet — rien à visualiser
 	hasRelevantJob := false
 	for _, j := range projectJobs {
 		if j.Status == JobRunning || j.Status == JobDone || j.Status == JobFailed {
@@ -67,6 +68,9 @@ func (s *Scheduler) vizTickProject(project *Project) {
 	}
 }
 
+// vizTickOne lance en arrière-plan la régénération de chaque combo périmé.
+// Elle retourne immédiatement : chaque combo est une goroutine indépendante
+// qui émet EventVizDone à la fin (succès ou erreur).
 func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job, localRepoDir string) {
 	jobsWriting := runningJobsWriteToVizData(jobs, viz, project)
 	localDataPath := ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
@@ -78,27 +82,38 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 			continue
 		}
 
-		var err error
-		if jobsWriting {
-			// Mode remote obligatoire : les données sont en cours d'écriture
-			// on ne touche pas au local
-			err = s.generateVizRemote(project, viz, combo, localRepoDir)
-		} else {
-			// Mode local par défaut quand le job est terminé
-			err = s.generateVizLocal(project, viz, combo, localRepoDir)
+		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
+			// Déjà en cours de génération par une autre goroutine, on saute.
+			continue
 		}
-		if err != nil {
-			log.Printf("viz: tick %s/%s combo %s: %v", project.Slug, viz.Name, combo.Key, err)
-		}
+
+		combo := combo    // capture pour la goroutine
+		jw := jobsWriting // capture pour la goroutine
+		go func() {
+			defer s.clearVizGenerating(viz.ID, combo.Key)
+
+			var err error
+			if jw {
+				err = s.generateVizRemote(project, viz, combo, localRepoDir)
+			} else {
+				err = s.generateVizLocal(project, viz, combo, localRepoDir)
+			}
+
+			vizErr := ""
+			if err != nil {
+				vizErr = err.Error()
+				log.Printf("viz: tick %s/%s combo %s: %v", project.Slug, viz.Name, combo.Key, err)
+			}
+			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, vizErr)
+		}()
 	}
 }
 
 // GenerateVizNow est appelé par le handler HTTP pour une régénération manuelle.
-// mode : "auto", "local", "remote".
-// En mode "local" avec des jobs en écriture, on procède quand même (choix explicite
-// de l'utilisateur) mais on log un avertissement.
-// Retourne le nombre de combos générés avec succès et l'éventuelle dernière erreur.
-func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode string) (int, error) {
+// Elle lance chaque combo dans une goroutine, émet immédiatement un événement
+// "generating" pour chacun, puis un EventVizDone à la fin. Elle retourne sans
+// attendre la fin des générations.
+func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode string) {
 	localRepoDir := filepath.Join(s.cachePath, project.ID, "repo")
 
 	s.mu.RLock()
@@ -127,27 +142,41 @@ func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode st
 		}
 	}
 
-	var lastErr error
-	ok := 0
 	for _, combo := range viz.AllCombos() {
-		var err error
-		if useRemote {
-			err = s.generateVizRemote(project, viz, combo, localRepoDir)
-		} else {
-			err = s.generateVizLocal(project, viz, combo, localRepoDir)
+		combo := combo
+		ur := useRemote
+
+		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
+			// Déjà en cours — on signale quand même "generating" pour que l'UI
+			// affiche le spinner si ce combo est la sélection courante.
+			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
+			continue
 		}
-		if err != nil {
-			log.Printf("viz: GenerateVizNow %s combo %s: %v", viz.Name, combo.Key, err)
-			lastErr = err
-		} else {
-			ok++
-		}
+
+		// Signal immédiat : le spinner s'affiche avant même que la goroutine démarre.
+		s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
+
+		go func() {
+			defer s.clearVizGenerating(viz.ID, combo.Key)
+
+			var err error
+			if ur {
+				err = s.generateVizRemote(project, viz, combo, localRepoDir)
+			} else {
+				err = s.generateVizLocal(project, viz, combo, localRepoDir)
+			}
+
+			vizErr := ""
+			if err != nil {
+				vizErr = err.Error()
+				log.Printf("viz: GenerateVizNow %s combo %s: %v", viz.Name, combo.Key, err)
+			}
+			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, vizErr)
+		}()
 	}
-	return ok, lastErr
 }
 
 // VizJobsWriting indique si des jobs running écrivent sur les données de cette viz.
-// Exposé pour que le handler HTTP puisse informer l'UI.
 func (s *Scheduler) VizJobsWriting(project *Project, viz *Visualization) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -203,7 +232,6 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 	}
 	if err := buildAndRun(pngVizCmd); err != nil {
 		log.Printf("viz: PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
-		// non fatal — le SVG est déjà là
 	}
 
 	log.Printf("viz: generated local %s combo %s", viz.Name, combo.Key)
@@ -301,7 +329,6 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 		pngOutputTpl = strings.ReplaceAll(viz.OutputFileTemplate, ".svg", ".png")
 	}
 
-	// SVG — fatal si échec
 	svgRemotePath, err := runRemote(svgVizCmd, svgOutputTpl)
 	if err != nil {
 		return err
@@ -311,7 +338,6 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 		return err
 	}
 
-	// PNG — non fatal
 	pngRemotePath, err := runRemote(pngVizCmd, pngOutputTpl)
 	if err != nil {
 		log.Printf("viz: remote PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
@@ -328,8 +354,6 @@ func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, comb
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-// runningJobsWriteToVizData retourne true si un job running du projet écrit
-// sur des fichiers qui se chevauchent avec le data_path de la viz.
 func runningJobsWriteToVizData(jobs []*Job, viz *Visualization, project *Project) bool {
 	for _, job := range jobs {
 		if job.Status != JobRunning {
@@ -347,7 +371,6 @@ func runningJobsWriteToVizData(jobs []*Job, viz *Visualization, project *Project
 	return false
 }
 
-// pathsOverlap retourne true si l'un des chemins est un préfixe de l'autre.
 func pathsOverlap(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -357,8 +380,6 @@ func pathsOverlap(a, b string) bool {
 	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 }
 
-// vizNeedsRegen retourne true si le fichier de sortie n'existe pas ou si un
-// fichier dans dataDir est plus récent que le fichier de sortie.
 func vizNeedsRegen(outputPath, dataDir string) bool {
 	outInfo, err := os.Stat(outputPath)
 	if os.IsNotExist(err) {
@@ -386,7 +407,6 @@ func vizNeedsRegen(outputPath, dataDir string) bool {
 	return needsRegen
 }
 
-// checkDataOnRemote vérifie l'existence d'un chemin sur le remote via SSH.
 func checkDataOnRemote(client *Client, remotePath string) (bool, error) {
 	if remotePath == "" {
 		return false, nil
@@ -398,9 +418,6 @@ func checkDataOnRemote(client *Client, remotePath string) (bool, error) {
 	return code == 0, nil
 }
 
-// buildVizCommand substitue les placeholders dans la commande viz pour un combo donné.
-// {version}        → slug de toutes les valeurs du combo (ex: "sine_0")
-// {<axis_name>}    → valeur de l'axe nommé pour ce combo
 func buildVizCommand(vizCommand string, combo VizCombo, viz *Visualization) string {
 	versionParts := make([]string, 0, len(viz.Axes))
 	for i := range viz.Axes {
@@ -426,7 +443,6 @@ func buildVizCommand(vizCommand string, combo VizCombo, viz *Visualization) stri
 	return cmd
 }
 
-// comboValueForAxis retourne la valeur brute (ex: "--env sine") pour l'axe toggleable à l'index i.
 func comboValueForAxis(combo VizCombo, viz *Visualization, axisIdx int) string {
 	if axisIdx >= len(combo.Args) {
 		return ""
@@ -434,7 +450,6 @@ func comboValueForAxis(combo VizCombo, viz *Visualization, axisIdx int) string {
 	return combo.Args[axisIdx]
 }
 
-// lastArgToken extrait le dernier token d'une valeur CLI (ex: "--env sine" → "sine").
 func lastArgToken(s string) string {
 	parts := strings.Fields(s)
 	if len(parts) == 0 {
