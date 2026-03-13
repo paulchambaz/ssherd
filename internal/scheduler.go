@@ -428,6 +428,15 @@ func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, stor
 		return
 	}
 
+	if _, _, code, err := client.Run("git --version"); err != nil || code != 0 {
+		log.Printf("scheduler: launchJob: git not found on %s, marking deprecated", machine.Name)
+		store, _ := LoadMachinesStore(s.cachePath)
+		s.markMachineDeprecated(store, machine)
+		clearLaunching()
+		s.revertJob(job, machine)
+		return
+	}
+
 	if job.GPURequirements.MinVRAMMB > 0 {
 		freeRaw, _, code, err := client.Run(
 			"nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1",
@@ -486,6 +495,13 @@ func (s *Scheduler) markMachineDeprecated(store *MachinesStore, machine *Machine
 func (s *Scheduler) revertJob(job *Job, machine *Machine) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if job.Status == JobCancelled {
+		if state, ok := s.machineStates[machine.ID]; ok {
+			state.CurrentJobID = ""
+		}
+		return
+	}
 
 	job.Status = JobPending
 	job.Machine = ""
@@ -1042,6 +1058,17 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 	}
 
 	s.mu.Lock()
+
+	if job.Status == JobCancelled {
+		for _, state := range s.machineStates {
+			if state.CurrentJobID == job.ID {
+				state.CurrentJobID = ""
+				break
+			}
+		}
+		s.mu.Unlock()
+		return
+	}
 
 	for _, state := range s.machineStates {
 		if state.CurrentJobID == job.ID {
