@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -354,8 +355,14 @@ func (s *Scheduler) findAvailableMachine(store *MachinesStore, req GPURequiremen
 		}
 	}
 
+	machines := make([]*Machine, len(store.Machines))
+	copy(machines, store.Machines)
+	rand.Shuffle(len(machines), func(i, j int) {
+		machines[i], machines[j] = machines[j], machines[i]
+	})
+
 	var preferred, fallback *Machine
-	for _, m := range store.Machines {
+	for _, m := range machines {
 		if inUse[m.ID] || !m.SatisfiesRequirements(req) {
 			continue
 		}
@@ -412,6 +419,8 @@ func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, stor
 	client, err := Connect(cfg)
 	if err != nil {
 		log.Printf("scheduler: launchJob: connect to %s failed: %v", machine.Name, err)
+		store, _ := LoadMachinesStore(s.cachePath)
+		s.markMachineUnreachable(store, machine)
 		clearLaunching()
 		s.revertJob(job, machine)
 		return
@@ -489,6 +498,18 @@ func (s *Scheduler) markMachineDeprecated(store *MachinesStore, machine *Machine
 	}
 	if err := SaveMachinesStore(s.cachePath, store); err != nil {
 		log.Printf("scheduler: failed to save deprecated machine %s: %v", machine.Name, err)
+	}
+}
+
+func (s *Scheduler) markMachineUnreachable(store *MachinesStore, machine *Machine) {
+	for _, m := range store.Machines {
+		if m.ID == machine.ID {
+			m.Status = MachineStatusUnreachable
+			break
+		}
+	}
+	if err := SaveMachinesStore(s.cachePath, store); err != nil {
+		log.Printf("scheduler: failed to save unreachable machine %s: %v", machine.Name, err)
 	}
 }
 

@@ -89,7 +89,8 @@ func (m *Machine) VRAMMiB() int {
 
 // SatisfiesRequirements vérifie que la machine est compatible avec les besoins du job.
 func (m *Machine) SatisfiesRequirements(req GPURequirements) bool {
-	if m.Status == MachineStatusDeprecated {
+	switch m.Status {
+	case MachineStatusDeprecated, MachineStatusUnreachable, MachineStatusBusy:
 		return false
 	}
 	if req.MinVRAMMB > 0 && m.VRAMMiB() > 0 && m.VRAMMiB() < req.MinVRAMMB/1024 {
