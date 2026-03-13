@@ -112,16 +112,14 @@ onReady(() => {
     return first.values.flatMap((v) => sub.map((r) => [v, ...r]));
   }
 
-  function slugify(s) {
+  function sanitizeAxisValue(s) {
     return s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
-
-  function lastToken(s) {
-    const parts = s.trim().split(/\s+/);
-    return parts[parts.length - 1] || s;
+      .trim()
+      .split(/\s+/)
+      .join("_")
+      .replace(/[^a-zA-Z0-9\-\_\.]+/g, "")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
   }
 
   function substituteVars(s, vars) {
@@ -169,7 +167,7 @@ onReady(() => {
 
     const allLines = [];
     for (const combo of combos) {
-      const ablationParts = combo.map((v) => slugify(lastToken(v)));
+      const ablationParts = combo.map((v) => sanitizeAxisValue(v));
       const ablation =
         ablationParts.length > 0 ? ablationParts.join("_") : "run";
 
@@ -177,7 +175,7 @@ onReady(() => {
         const vars = { seed: String(s), ablation };
         axes.forEach((ax, i) => {
           if (ax.name && i < combo.length) {
-            vars[ax.name] = lastToken(combo[i]);
+            vars[ax.name] = sanitizeAxisValue(combo[i]);
           }
         });
 
@@ -379,16 +377,14 @@ onReady(() => {
   let nextVizIdx = 0;
   let vizPreviewExpanded = false;
 
-  function slugify(s) {
+  function sanitizeAxisValue(s) {
     return s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
-
-  function lastToken(s) {
-    const parts = s.trim().split(/\s+/);
-    return parts[parts.length - 1] || s;
+      .trim()
+      .split(/\s+/)
+      .join("_")
+      .replace(/[^a-zA-Z0-9\-\_\.]+/g, "")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
   }
 
   function getVizAxes() {
@@ -418,13 +414,13 @@ onReady(() => {
   }
 
   function resolveCmd(cmdTpl, combo) {
-    const versionParts = combo.map(({ val }) => slugify(lastToken(val)));
+    const versionParts = combo.map(({ val }) => sanitizeAxisValue(val));
     const version =
       versionParts.length > 0 ? versionParts.join("_") : "default";
     let cmd = cmdTpl;
     cmd = cmd.replaceAll("{version}", version);
     combo.forEach(({ axis, val }) => {
-      cmd = cmd.replaceAll("{" + axis.name + "}", lastToken(val));
+      cmd = cmd.replaceAll("{" + axis.name + "}", sanitizeAxisValue(val));
     });
     return cmd;
   }
@@ -642,18 +638,6 @@ onReady(() => {
   updateVizPreview();
 });
 
-// ─── Viz viewer (page detail visualisation) ───────────────────────────────────
-//
-// Gestion du viewer interactif et des mises à jour WebSocket asynchrones.
-//
-// État du viewer :
-//   selection        : {axisName → valeur courante} — détermine quelle image charger
-//   availableCombos  : Set des comboKeys dont le fichier de sortie est connu disponible
-//   currentComboKey  : comboKey correspondant à la sélection courante
-//
-// Événement WebSocket : htmx swap l'élément #viz-result-{vizID} avec les
-// attributs data-combo-key, data-error, data-timestamp. On observe les mutations
-// via MutationObserver pour réagir à chaque swap.
 onReady(() => {
   const viewer = document.getElementById("viz-viewer");
   if (!viewer) return;

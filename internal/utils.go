@@ -25,3 +25,13 @@ func GenerateID() (string, error) {
     }
     return hex.EncodeToString(b), nil
 }
+
+
+func SanitizeAxisValue(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(s), "_")
+	s = reStripInvalid.ReplaceAllString(s, "")
+	s = reCollapseUnder.ReplaceAllString(s, "_")
+	s = strings.Trim(s, "_")
+	return s
+}

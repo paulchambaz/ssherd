@@ -182,7 +182,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 		for seed := startSeed; seed < startSeed+numSeeds; seed++ {
 			ablationParts := make([]string, 0, len(combo))
 			for _, v := range combo {
-				ablationParts = append(ablationParts, internal.Slugify(lastToken(v)))
+				ablationParts = append(ablationParts, internal.SanitizeAxisValue(v))
 			}
 			ablation := strings.Join(ablationParts, "_")
 			if ablation == "" {
@@ -195,13 +195,13 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 			}
 			for i, ax := range axes {
 				if i < len(combo) {
-					vars[ax.Name] = lastToken(combo[i])
+					vars[ax.Name] = internal.SanitizeAxisValue(combo[i])
 				}
 			}
 
 			parts := []string{namePrefix}
 			for _, v := range combo {
-				parts = append(parts, lastToken(v))
+				parts = append(parts, internal.SanitizeAxisValue(v))
 			}
 			parts = append(parts, "seed "+strconv.Itoa(seed))
 			displayName := substituteVars(strings.Join(parts, " - "), vars)
@@ -410,14 +410,6 @@ func absOrRelative(path, base string) string {
 		return path
 	}
 	return base + "/" + path
-}
-
-func lastToken(s string) string {
-	parts := strings.Fields(s)
-	if len(parts) == 0 {
-		return s
-	}
-	return parts[len(parts)-1]
 }
 
 func substituteVars(s string, vars map[string]string) string {

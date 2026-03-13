@@ -7,9 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var reStripInvalid = regexp.MustCompile(`[^a-zA-Z0-9\-\_\.]+`)
+var reCollapseUnder = regexp.MustCompile(`_+`)
 
 // vizLoop tourne toutes les VizInterval et régénère les visualisations périmées.
 // Chaque combo est lancé dans une goroutine dédiée via vizTickOne — la boucle
@@ -422,7 +426,7 @@ func buildVizCommand(vizCommand string, combo VizCombo, viz *Visualization) stri
 	versionParts := make([]string, 0, len(viz.Axes))
 	for i := range viz.Axes {
 		val := comboValueForAxis(combo, viz, i)
-		versionParts = append(versionParts, Slugify(lastArgToken(val)))
+		versionParts = append(versionParts, SanitizeAxisValue(val))
 	}
 	version := strings.Join(versionParts, "_")
 	if version == "" {
@@ -433,7 +437,7 @@ func buildVizCommand(vizCommand string, combo VizCombo, viz *Visualization) stri
 		"version": version,
 	}
 	for i, ax := range viz.Axes {
-		vars[ax.Name] = lastArgToken(comboValueForAxis(combo, viz, i))
+		vars[ax.Name] = SanitizeAxisValue(comboValueForAxis(combo, viz, i))
 	}
 
 	cmd := vizCommand
@@ -448,12 +452,4 @@ func comboValueForAxis(combo VizCombo, viz *Visualization, axisIdx int) string {
 		return ""
 	}
 	return combo.Args[axisIdx]
-}
-
-func lastArgToken(s string) string {
-	parts := strings.Fields(s)
-	if len(parts) == 0 {
-		return s
-	}
-	return parts[len(parts)-1]
 }
