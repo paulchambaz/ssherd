@@ -91,6 +91,8 @@ func (s JobStatus) BadgeClass() string {
 		return "bg-red-100 text-red-700"
 	case JobStalled:
 		return "bg-yellow-100 text-yellow-700"
+	case JobCancelled:
+		return "bg-orange-100 text-orange-700"
 	default:
 		return "bg-base-100 text-base-500"
 	}

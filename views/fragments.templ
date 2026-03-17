@@ -9,7 +9,12 @@ import (
 
 // JobRowFragment met à jour une ligne de la liste des jobs via OOB swap.
 templ JobRowFragment(job *internal.Job) {
-	<div id={ "job-row-" + job.ID } hx-swap-oob="true" class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+	<div
+		id={ "job-row-" + job.ID }
+		hx-swap-oob="true"
+		class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm cursor-pointer"
+		onclick={ navigateTo("/projects/" + job.ProjectSlug + "/jobs/" + job.ID) }
+	>
 		@jobRowCells(job)
 	</div>
 }
@@ -48,7 +53,9 @@ templ jobRowCells(job *internal.Job) {
 }
 
 templ inlineProgressBar(job *internal.Job) {
-	if job.Status == internal.JobDone {
+	if job.Status == internal.JobCancelled {
+		<span class="text-base-300 text-xs">—</span>
+	} else if job.Status == internal.JobDone {
 		<div class="flex items-center gap-2 w-32">
 			<div class="flex-1 bg-base-200 rounded-full h-1.5">
 				<div class="bg-blue-500 h-1.5 rounded-full" style="width:100%"></div>
@@ -68,7 +75,7 @@ templ inlineProgressBar(job *internal.Job) {
 }
 
 templ jobProgressContent(job *internal.Job) {
-	if job.Progress != nil || job.Status == internal.JobDone {
+	if job.Status != internal.JobCancelled && (job.Progress != nil || job.Status == internal.JobDone) {
 		{{
 			percent := float64(0)
 			currentStep := 0
@@ -166,4 +173,8 @@ func clampPercent(p float64) float64 {
 		return 0
 	}
 	return p
+}
+
+templ JobDeleteFragment(jobID string) {
+	<div id={ "job-row-" + jobID } hx-swap-oob="delete"></div>
 }

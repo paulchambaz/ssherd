@@ -54,6 +54,8 @@ type SchedulerConfig struct {
 	VizInterval      time.Duration
 	LocalPrefix      string
 	ProbeParallelism int
+	DispatchStart    int
+	DispatchEnd      int
 	NtfyURL          string
 	NtfyChannel      string
 	NtfyUser         string
@@ -70,6 +72,8 @@ func DefaultSchedulerConfig() SchedulerConfig {
 		VizInterval:      10 * time.Minute,
 		LocalPrefix:      "",
 		ProbeParallelism: 8,
+		DispatchStart:    20,
+		DispatchEnd:      8,
 	}
 }
 
@@ -291,6 +295,12 @@ func (s *Scheduler) dispatchTick() {
 		return
 	}
 
+	if !s.isDispatchAllowed() {
+		return
+	}
+
+	s.requeueFailedJobs()
+
 	job := s.nextPending()
 	if job == nil {
 		return
@@ -345,6 +355,60 @@ func (s *Scheduler) nextPending() *Job {
 		}
 	}
 	return nil
+}
+
+func (s *Scheduler) requeueFailedJobs() {
+	var requeued []*Job
+	var rest []*Job
+
+	for _, j := range s.jobs {
+		if j.Status == JobFailed && j.RetryCount < j.MaxRetries {
+			j.Status = JobPending
+			j.RetryCount++
+			j.RunCommand = j.RetryCommand
+			j.Machine = ""
+			j.StartedAt = nil
+			j.FinishedAt = nil
+			j.Progress = nil
+			log.Printf("scheduler: dispatch: auto-requeue failed job=%s (retry %d/%d)", j.ID, j.RetryCount, j.MaxRetries)
+			if err := SaveJob(s.cachePath, j); err != nil {
+				log.Printf("scheduler: dispatch: save requeued job %s: %v", j.ID, err)
+			}
+			s.emit(EventJobStatus, j)
+			requeued = append(requeued, j)
+		} else {
+			rest = append(rest, j)
+		}
+	}
+
+	if len(requeued) > 0 {
+		s.jobs = append(requeued, rest...)
+	}
+}
+
+func (s *Scheduler) isDispatchAllowed() bool {
+	cfg := s.getConfig()
+	hour := time.Now().Hour()
+	start := cfg.DispatchStart
+	end := cfg.DispatchEnd
+
+	if start == end {
+		return true
+	}
+
+	var active bool
+	if start > end {
+		// plage traverse minuit : ex 20h → 8h
+		active = hour >= start || hour < end
+	} else {
+		// plage dans la même journée : ex 8h → 20h
+		active = hour >= start && hour < end
+	}
+
+	if !active {
+		log.Printf("scheduler: dispatch: outside allowed window [%02d:00-%02d:00), skipping", start, end)
+	}
+	return active
 }
 
 func (s *Scheduler) findAvailableMachine(store *MachinesStore, req GPURequirements) *Machine {
@@ -478,7 +542,35 @@ func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, stor
 		return
 	}
 
-	if err := client.RunBackground(LaunchParams{Job: job, Project: project}); err != nil {
+	// Si des données locales existent pour ce job (checkpoints d'un retry
+	// précédent), les copier vers le temporary de la nouvelle machine avant
+	// de lancer le script.
+	if machine.TemporaryPath != "" && project.DataPath != "" && job.OutputPath != "" {
+		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
+		if info, err := os.Stat(localOutputDir); err == nil && info.IsDir() {
+			remoteOutputDir := machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath
+			log.Printf("scheduler: launchJob: copying local data to %s:%s", machine.Name, remoteOutputDir)
+			if err := client.CopyLocalToRemote(localOutputDir, remoteOutputDir); err != nil {
+				log.Printf("scheduler: launchJob: CopyLocalToRemote failed for job %s: %v — proceeding anyway", job.ID, err)
+				// Non fatal : le job peut démarrer sans les checkpoints,
+				// retry_command --resume échouera proprement s'ils manquent.
+			}
+		}
+	}
+
+	if machine.TemporaryPath != "" {
+		if strings.Contains(job.LogPath, "{temporary_path}") {
+			job.LogPath = strings.ReplaceAll(job.LogPath, "{temporary_path}", machine.TemporaryPath)
+		} else if project.DataPath != "" && job.OutputPath != "" {
+			// fallback pour les jobs créés avant #19b
+			job.LogPath = machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath + "/progress.json"
+		}
+		if err := SaveJob(s.cachePath, job); err != nil {
+			log.Printf("scheduler: launchJob: update LogPath for job %s: %v", job.ID, err)
+		}
+	}
+
+	if err := client.RunBackground(LaunchParams{Job: job, Project: project, Machine: machine}); err != nil {
 		log.Printf("scheduler: launchJob: launch failed for job %s on %s: %v", job.ID, machine.Name, err)
 		clearLaunching()
 		s.revertJob(job, machine)
@@ -680,12 +772,14 @@ func (s *Scheduler) checkJob(watcher *Client, job *Job) error {
 	case "done":
 		s.markFinalizing(job.ID)
 		s.syncProgress(watcher, job)
+		s.syncOutputToLocal(watcher, job)
 		log.Printf("scheduler: checkJob: job=%s done — finalizing", job.ID)
 		s.finalizeJobInline(watcher, job, localJobDir, JobDone)
 		return nil
 	case "failed":
 		s.markFinalizing(job.ID)
 		s.syncProgress(watcher, job)
+		s.syncOutputToLocal(watcher, job)
 		log.Printf("scheduler: checkJob: job=%s failed — finalizing", job.ID)
 		s.finalizeJobInline(watcher, job, localJobDir, JobFailed)
 		return nil
@@ -922,6 +1016,77 @@ func (s *Scheduler) CancelJob(jobID string) error {
 	return nil
 }
 
+func (s *Scheduler) DeleteJob(jobID, projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var found *Job
+	for _, j := range s.jobs {
+		if j.ID == jobID {
+			found = j
+			break
+		}
+	}
+	if found == nil {
+		// Déjà absent de la mémoire, on tente quand même le disque.
+		return internal_deleteJobDir(s.cachePath, projectID, jobID)
+	}
+
+	switch found.Status {
+	case JobDone, JobFailed, JobStalled, JobCancelled:
+		// ok
+	default:
+		return fmt.Errorf("job %s is not in a terminal state", jobID)
+	}
+
+	filtered := make([]*Job, 0, len(s.jobs)-1)
+	for _, j := range s.jobs {
+		if j.ID != jobID {
+			filtered = append(filtered, j)
+		}
+	}
+	s.jobs = filtered
+
+	return internal_deleteJobDir(s.cachePath, projectID, jobID)
+}
+
+func internal_deleteJobDir(cachePath, projectID, jobID string) error {
+	dir := jobDir(cachePath, projectID, jobID)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("delete job dir: %w", err)
+	}
+	return nil
+}
+
+func (s *Scheduler) DeleteFinishedJobs(projectID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var deleted []string
+	var remaining []*Job
+
+	for _, j := range s.jobs {
+		if j.ProjectID != projectID {
+			remaining = append(remaining, j)
+			continue
+		}
+		switch j.Status {
+		case JobDone, JobFailed, JobStalled, JobCancelled:
+			if err := internal_deleteJobDir(s.cachePath, projectID, j.ID); err != nil {
+				log.Printf("scheduler: DeleteFinishedJobs: %v", err)
+				remaining = append(remaining, j)
+			} else {
+				deleted = append(deleted, j.ID)
+			}
+		default:
+			remaining = append(remaining, j)
+		}
+	}
+
+	s.jobs = remaining
+	return deleted, nil
+}
+
 func (s *Scheduler) RequeueJob(job *Job) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -944,31 +1109,52 @@ func (s *Scheduler) syncLoop() {
 }
 
 func (s *Scheduler) syncTick() {
-	s.mu.Lock()
-	dirty := make(map[string]bool)
-	for k, v := range s.syncDirty {
-		dirty[k] = v
+	// Collecter les jobs running et les grouper par machine.
+	s.mu.RLock()
+	type machineJob struct {
+		job     *Job
+		project *Project
 	}
-	for k := range dirty {
-		delete(s.syncDirty, k)
+	byMachine := make(map[string][]*Job)
+	for _, j := range s.jobs {
+		if j.Status == JobRunning && j.Machine != "" {
+			byMachine[j.Machine] = append(byMachine[j.Machine], j)
+		}
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
-	if len(dirty) == 0 {
+	if len(byMachine) == 0 {
+		log.Printf("scheduler: syncTick: no running jobs, skip")
 		return
 	}
 
-	for projectID := range dirty {
-		project, err := LoadProject(s.cachePath, projectID)
-		if err != nil {
-			log.Printf("scheduler: sync: load project %s: %v", projectID, err)
+	store, err := LoadMachinesStore(s.cachePath)
+	if err != nil {
+		log.Printf("scheduler: syncTick: load store: %v", err)
+		return
+	}
+
+	for machineName, jobs := range byMachine {
+		var machine *Machine
+		for _, m := range store.Machines {
+			if m.Name == machineName {
+				machine = m
+				break
+			}
+		}
+		if machine == nil || machine.TemporaryPath == "" {
+			log.Printf("scheduler: syncTick: machine %s has no TemporaryPath, skip", machineName)
 			continue
 		}
-		if err := s.syncRepo(project); err != nil {
-			log.Printf("scheduler: sync: project %s failed: %v", project.Slug, err)
-			s.mu.Lock()
-			s.syncDirty[projectID] = true
-			s.mu.Unlock()
+
+		proxy := store.FindProxy(machine.ProxyID)
+		if proxy == nil {
+			log.Printf("scheduler: syncTick: proxy not found for machine %s, skip", machineName)
+			continue
+		}
+
+		if err := s.syncMachine(machine, proxy, jobs); err != nil {
+			log.Printf("scheduler: syncTick: machine %s failed: %v", machineName, err)
 		}
 	}
 }
@@ -983,6 +1169,52 @@ func (s *Scheduler) projectSyncMu(projectID string) *sync.Mutex {
 		s.syncMu[projectID] = &sync.Mutex{}
 	}
 	return s.syncMu[projectID]
+}
+
+func (s *Scheduler) syncMachine(machine *Machine, proxy *Proxy, jobs []*Job) error {
+	client, err := Connect(SSHConfig{
+		GatewayHost:     proxy.Hostname,
+		GatewayPort:     proxy.Port,
+		GatewayUser:     proxy.User,
+		GatewayPassword: proxy.Password,
+		TargetHost:      machine.Hostname,
+		TargetPort:      22,
+		TargetUser:      machine.User,
+		TargetPassword:  proxy.Password,
+		ConnectTimeout:  30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer client.Close()
+
+	// Grouper les jobs par projet pour éviter de syncer le même DataPath deux fois.
+	type projectSync struct {
+		dataPath  string
+		projectID string
+	}
+	seen := make(map[string]bool)
+	for _, job := range jobs {
+		project, err := LoadProject(s.cachePath, job.ProjectID)
+		if err != nil || project.DataPath == "" {
+			continue
+		}
+		key := project.ID + "/" + project.DataPath
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		remoteDir := machine.TemporaryPath + "/" + project.DataPath + "/"
+		localDir := filepath.Join(s.cachePath, project.ID, "repo", project.DataPath)
+
+		log.Printf("scheduler: syncMachine: %s — rsync %s → %s", machine.Name, remoteDir, localDir)
+		if err := client.SyncDirToLocal(remoteDir, localDir); err != nil {
+			log.Printf("scheduler: syncMachine: sync %s failed: %v", remoteDir, err)
+		}
+	}
+
+	return nil
 }
 
 func (s *Scheduler) syncRepo(project *Project) error {
@@ -1051,19 +1283,96 @@ func (s *Scheduler) syncRepo(project *Project) error {
 }
 
 func (s *Scheduler) SyncRepoNow(projectID string) error {
-	project, err := LoadProject(s.cachePath, projectID)
-	if err != nil {
-		return fmt.Errorf("load project: %w", err)
-	}
 	go func() {
-		if err := s.syncRepo(project); err != nil {
-			log.Printf("scheduler: SyncRepoNow: %v", err)
+		s.mu.RLock()
+		var runningJobs []*Job
+		for _, j := range s.jobs {
+			if j.ProjectID == projectID && j.Status == JobRunning && j.Machine != "" {
+				runningJobs = append(runningJobs, j)
+			}
+		}
+		s.mu.RUnlock()
+
+		if len(runningJobs) == 0 {
+			log.Printf("scheduler: SyncRepoNow: no running jobs for project %s, nothing to sync", projectID)
+			return
+		}
+
+		store, err := LoadMachinesStore(s.cachePath)
+		if err != nil {
+			log.Printf("scheduler: SyncRepoNow: load store: %v", err)
+			return
+		}
+
+		byMachine := make(map[string][]*Job)
+		for _, j := range runningJobs {
+			byMachine[j.Machine] = append(byMachine[j.Machine], j)
+		}
+
+		for machineName, jobs := range byMachine {
+			var machine *Machine
+			for _, m := range store.Machines {
+				if m.Name == machineName {
+					machine = m
+					break
+				}
+			}
+			if machine == nil || machine.TemporaryPath == "" {
+				continue
+			}
+			proxy := store.FindProxy(machine.ProxyID)
+			if proxy == nil {
+				continue
+			}
+			if err := s.syncMachine(machine, proxy, jobs); err != nil {
+				log.Printf("scheduler: SyncRepoNow: machine %s: %v", machineName, err)
+			}
 		}
 	}()
 	return nil
 }
 
 // ─── Finalization ─────────────────────────────────────────────────────────────
+func (s *Scheduler) syncOutputToLocal(watcher *Client, job *Job) {
+	if job.OutputPath == "" {
+		return
+	}
+
+	store, err := LoadMachinesStore(s.cachePath)
+	if err != nil {
+		log.Printf("scheduler: syncOutputToLocal: load store: %v", err)
+		return
+	}
+	var machine *Machine
+	for _, m := range store.Machines {
+		if m.Name == job.Machine {
+			machine = m
+			break
+		}
+	}
+	if machine == nil || machine.TemporaryPath == "" {
+		return
+	}
+
+	project, err := LoadProject(s.cachePath, job.ProjectID)
+	if err != nil || project.DataPath == "" {
+		return
+	}
+
+	remoteOutputDir := machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath
+	localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
+
+	log.Printf("scheduler: syncOutputToLocal: job=%s rsync %s → %s", job.ID, remoteOutputDir, localOutputDir)
+	if err := watcher.SyncDirToLocal(remoteOutputDir, localOutputDir); err != nil {
+		log.Printf("scheduler: syncOutputToLocal: sync failed: %v", err)
+	}
+
+	if _, _, code, err := watcher.Run("rm -rf " + remoteOutputDir); err != nil || code != 0 {
+		log.Printf("scheduler: syncOutputToLocal: rm -rf %s failed (code=%d): %v", remoteOutputDir, code, err)
+	} else {
+		log.Printf("scheduler: syncOutputToLocal: cleaned up remote %s", remoteOutputDir)
+	}
+}
 
 func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir string, status JobStatus) {
 	defer s.clearFinalizing(job.ID)
@@ -1124,7 +1433,6 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 			job.Progress.ETASeconds = 0
 			job.Progress.LastUpdated = now
 		}
-		s.syncDirty[job.ProjectID] = true
 	}
 
 	if err := SaveJob(s.cachePath, job); err != nil {
@@ -1201,6 +1509,8 @@ func saveSchedulerConfig(cachePath string, cfg SchedulerConfig) error {
 		SyncInterval     string  `json:"sync_interval"`
 		VizInterval      string  `json:"viz_interval"`
 		LocalPrefix      string  `json:"local_prefix"`
+		DispatchStart    int     `json:"dispatch_start"`
+		DispatchEnd      int     `json:"dispatch_end"`
 		NtfyURL          string  `json:"ntfy_url"`
 		NtfyChannel      string  `json:"ntfy_channel"`
 		NtfyUser         string  `json:"ntfy_user"`
@@ -1214,6 +1524,8 @@ func saveSchedulerConfig(cachePath string, cfg SchedulerConfig) error {
 		SyncInterval:     cfg.SyncInterval.String(),
 		VizInterval:      cfg.VizInterval.String(),
 		LocalPrefix:      cfg.LocalPrefix,
+		DispatchStart:    cfg.DispatchStart,
+		DispatchEnd:      cfg.DispatchEnd,
 		NtfyURL:          cfg.NtfyURL,
 		NtfyChannel:      cfg.NtfyChannel,
 		NtfyUser:         cfg.NtfyUser,
@@ -1242,6 +1554,8 @@ func loadSchedulerConfig(cachePath string) (SchedulerConfig, error) {
 		SyncInterval     string  `json:"sync_interval"`
 		VizInterval      string  `json:"viz_interval"`
 		LocalPrefix      string  `json:"local_prefix"`
+		DispatchStart    int     `json:"dispatch_start"`
+		DispatchEnd      int     `json:"dispatch_end"`
 		NtfyURL          string  `json:"ntfy_url"`
 		NtfyChannel      string  `json:"ntfy_channel"`
 		NtfyUser         string  `json:"ntfy_user"`
@@ -1268,7 +1582,14 @@ func loadSchedulerConfig(cachePath string) (SchedulerConfig, error) {
 	if d, err := time.ParseDuration(raw.VizInterval); err == nil {
 		cfg.VizInterval = d
 	}
+
 	cfg.LocalPrefix = raw.LocalPrefix
+	if raw.DispatchStart >= 0 && raw.DispatchStart <= 23 {
+		cfg.DispatchStart = raw.DispatchStart
+	}
+	if raw.DispatchEnd >= 0 && raw.DispatchEnd <= 23 {
+		cfg.DispatchEnd = raw.DispatchEnd
+	}
 	cfg.NtfyURL = raw.NtfyURL
 	cfg.NtfyChannel = raw.NtfyChannel
 	cfg.NtfyUser = raw.NtfyUser

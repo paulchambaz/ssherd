@@ -11,7 +11,7 @@ import (
 type GPUInfo struct {
 	Model   string
 	VRAMMiB int
-	TFLOPs  float64 // FP32 approximatif, pour trier par puissance
+	TFLOPs  float64
 }
 
 // KnownGPUs est la liste des GPUs reconnus par le scheduler.
@@ -69,14 +69,15 @@ type Proxy struct {
 }
 
 type Machine struct {
-	ID       string        `json:"id"`
-	Name     string        `json:"name"`
-	Hostname string        `json:"hostname"`
-	User     string        `json:"user"`
-	Protocol int           `json:"protocol"`
-	ProxyID  string        `json:"proxy_id,omitempty"`
-	GPUModel string        `json:"gpu_model,omitempty"`
-	Status   MachineStatus `json:"status,omitempty"`
+	ID            string        `json:"id"`
+	Name          string        `json:"name"`
+	Hostname      string        `json:"hostname"`
+	User          string        `json:"user"`
+	Protocol      int           `json:"protocol"`
+	ProxyID       string        `json:"proxy_id,omitempty"`
+	GPUModel      string        `json:"gpu_model,omitempty"`
+	TemporaryPath string        `json:"temporary_path,omitempty"`
+	Status        MachineStatus `json:"status,omitempty"`
 }
 
 // VRAMMiB retourne la VRAM connue de la machine, ou 0 si le GPU est inconnu.

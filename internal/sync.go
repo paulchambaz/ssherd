@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -129,6 +130,127 @@ func (c *Client) SyncDirToLocal(remoteDir, localDir string) error {
 	log.Printf("ssh: [%s] SyncDirToLocal: %s — done (%d files transferred, %d bytes)", c.name, remoteDir, len(toSync), len(tarData))
 	return nil
 }
+
+// CopyLocalToRemote copie localDir vers remoteDir sur la machine distante.
+// Symétrique de SyncDirToLocal : tar local → base64 → SSH → décode + extrait.
+// Seuls les fichiers absents ou plus anciens sur le remote sont transférés.
+func (c *Client) CopyLocalToRemote(localDir, remoteDir string) error {
+	if _, err := os.Stat(localDir); os.IsNotExist(err) {
+		log.Printf("ssh: [%s] CopyLocalToRemote: %s absent, skip", c.name, localDir)
+		return nil
+	}
+
+	// Lister les fichiers locaux.
+	var localFiles []RemoteFileInfo
+	err := filepath.WalkDir(localDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(localDir, path)
+		localFiles = append(localFiles, RemoteFileInfo{
+			Path:    rel,
+			ModTime: info.ModTime(),
+		})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk local dir: %w", err)
+	}
+	if len(localFiles) == 0 {
+		log.Printf("ssh: [%s] CopyLocalToRemote: %s empty, skip", c.name, localDir)
+		return nil
+	}
+
+	// Interroger les mtimes remote pour ne transférer que ce qui est nécessaire.
+	remoteFiles, err := c.ListRemoteFiles(remoteDir)
+	if err != nil {
+		return fmt.Errorf("list remote files: %w", err)
+	}
+	remoteMtimes := make(map[string]time.Time, len(remoteFiles))
+	for _, rf := range remoteFiles {
+		remoteMtimes[rf.Path] = rf.ModTime
+	}
+
+	var toSync []string
+	for _, lf := range localFiles {
+		remoteMtime, exists := remoteMtimes[lf.Path]
+		if !exists || lf.ModTime.After(remoteMtime) {
+			toSync = append(toSync, lf.Path)
+		}
+	}
+
+	if len(toSync) == 0 {
+		log.Printf("ssh: [%s] CopyLocalToRemote: %s — %d files, all up to date", c.name, localDir, len(localFiles))
+		return nil
+	}
+
+	log.Printf("ssh: [%s] CopyLocalToRemote: %s — syncing %d/%d files", c.name, localDir, len(toSync), len(localFiles))
+
+	// Construire le tar en local à partir de la liste de fichiers à transférer.
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	for _, rel := range toSync {
+		absPath := filepath.Join(localDir, rel)
+		info, err := os.Stat(absPath)
+		if err != nil {
+			log.Printf("ssh: CopyLocalToRemote: stat %s: %v", absPath, err)
+			continue
+		}
+		hdr := &tar.Header{
+			Name:    rel,
+			Mode:    int64(info.Mode()),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+			Typeflag: tar.TypeReg,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return fmt.Errorf("tar header %s: %w", rel, err)
+		}
+		f, err := os.Open(absPath)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", absPath, err)
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			f.Close()
+			return fmt.Errorf("tar write %s: %w", rel, err)
+		}
+		f.Close()
+	}
+
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("tar close: %w", err)
+	}
+	if err := gw.Close(); err != nil {
+		return fmt.Errorf("gzip close: %w", err)
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	// Envoyer via SSH : décode le base64 et extrait le tar sur le remote.
+	cmd := fmt.Sprintf(
+		"mkdir -p %s && printf '%%s' %s | base64 -d | tar -xzf - -C %s 2>/dev/null",
+		shellEscape(remoteDir),
+		shellEscape(encoded),
+		shellEscape(remoteDir),
+	)
+	_, stderr, code, err := c.Run(cmd)
+	if err != nil {
+		return fmt.Errorf("remote extract: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("remote extract failed (code=%d): %s", code, stderr)
+	}
+
+	log.Printf("ssh: [%s] CopyLocalToRemote: %s — done (%d files, %d bytes)", c.name, localDir, len(toSync), buf.Len())
+	return nil
+}
+
 
 // extractTarGz extrait une archive tar.gz dans destDir en préservant les mtimes.
 func extractTarGz(data []byte, destDir string) error {

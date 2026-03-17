@@ -6,6 +6,7 @@ const (
 	EventJobStatus   EventKind = "status"
 	EventJobProgress EventKind = "progress"
 	EventVizDone     EventKind = "viz_done"
+	EventJobDeleted  EventKind = "deleted"
 )
 
 type JobEvent struct {

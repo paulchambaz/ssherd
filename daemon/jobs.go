@@ -22,19 +22,21 @@ type axisInput struct {
 // BatchFormState capture l'intégralité des inputs du formulaire New Batch.
 // Sérialisé dans job.FormState à la création pour permettre le Redo.
 type BatchFormState struct {
-	NamePrefix   string      `json:"name_prefix"`
-	BaseCommand  string      `json:"base_command"`
-	SeedFlag     string      `json:"seed_flag"`
-	StartSeed    int         `json:"start_seed"`
-	NumSeeds     int         `json:"num_seeds"`
-	MaxRetries   int         `json:"max_retries"`
-	MinVRAM      int         `json:"min_vram"`
-	PreferredGPU string      `json:"preferred_gpu"`
-	RetrySuffix  string      `json:"retry_suffix"`
-	LogPath      string      `json:"log_path"`
-	OutputPath   string      `json:"output_path"`
-	OutputFiles  string      `json:"output_files"`
-	Axes         []axisInput `json:"axes"`
+	NamePrefix     string      `json:"name_prefix"`
+	BaseCommand    string      `json:"base_command"`
+	SeedFlag       string      `json:"seed_flag"`
+	StartSeed      int         `json:"start_seed"`
+	NumSeeds       int         `json:"num_seeds"`
+	MaxRetries     int         `json:"max_retries"`
+	MinVRAM        int         `json:"min_vram"`
+	PreferredGPU   string      `json:"preferred_gpu"`
+	RetrySuffix    string      `json:"retry_suffix"`
+	LogArgument    string      `json:"log_argument"`
+	LogPath        string      `json:"log_path"`
+	OutputArgument string      `json:"output_argument"`
+	OutputPath     string      `json:"output_path"`
+	OutputFiles    string      `json:"output_files"`
+	Axes           []axisInput `json:"axes"`
 }
 
 func (s *Server) getNewBatch(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +121,8 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	preferredGPU := r.FormValue("preferred_gpu")
 	retrySuffix := strings.TrimSpace(r.FormValue("retry_suffix"))
+	logArgument := strings.TrimSpace(r.FormValue("log_argument"))
+	outputArgument := strings.TrimSpace(r.FormValue("output_argument"))
 	outputFilesRaw := r.FormValue("output_files")
 
 	logPathTpl := strings.TrimSpace(r.FormValue("log_path"))
@@ -141,19 +145,21 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 
 	// Sérialiser le FormState une seule fois — partagé par tous les jobs du batch.
 	formState := BatchFormState{
-		NamePrefix:   namePrefix,
-		BaseCommand:  baseCommand,
-		SeedFlag:     seedFlag,
-		StartSeed:    startSeed,
-		NumSeeds:     numSeeds,
-		MaxRetries:   maxRetries,
-		MinVRAM:      minVRAM,
-		PreferredGPU: preferredGPU,
-		RetrySuffix:  retrySuffix,
-		LogPath:      logPathTpl,
-		OutputPath:   outputPathTpl,
-		OutputFiles:  outputFilesRaw,
-		Axes:         axes,
+		NamePrefix:     namePrefix,
+		BaseCommand:    baseCommand,
+		SeedFlag:       seedFlag,
+		StartSeed:      startSeed,
+		NumSeeds:       numSeeds,
+		MaxRetries:     maxRetries,
+		MinVRAM:        minVRAM,
+		PreferredGPU:   preferredGPU,
+		RetrySuffix:    retrySuffix,
+		LogArgument:    logArgument,
+		LogPath:        logPathTpl,
+		OutputArgument: outputArgument,
+		OutputPath:     outputPathTpl,
+		OutputFiles:    outputFilesRaw,
+		Axes:           axes,
 	}
 	formStateJSON, err := json.Marshal(formState)
 	if err != nil {
@@ -208,18 +214,44 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 
 			cmdTokens := append([]string{baseCommand}, combo...)
 			cmdTokens = append(cmdTokens, seedFlag, strconv.Itoa(seed))
-			runCmd := substituteVars("cd "+p.RemotePath+" && "+strings.Join(cmdTokens, " "), vars)
+			baseCmd := substituteVars("cd "+p.RemotePath+" && "+strings.Join(cmdTokens, " "), vars)
+
+			logPath := substituteVars(logPathTpl, vars)
+			outputPath := substituteVars(outputPathTpl, vars)
+
+			// Appendre les arguments log/output si configurés et que DataPath est défini.
+			if logArgument != "" && logPath != "" && p.DataPath != "" {
+				baseCmd += " " + logArgument + " {temporary_path}/" + p.DataPath + "/" + logPath
+			}
+			if outputArgument != "" && outputPath != "" && p.DataPath != "" {
+				baseCmd += " " + outputArgument + " {temporary_path}/" + p.DataPath + "/" + outputPath
+			}
+
+			runCmd := baseCmd
 			retryCmd := runCmd
 			if retrySuffix != "" {
 				retryCmd += " " + retrySuffix
 			}
 
-			logPath := absOrRelative(substituteVars(logPathTpl, vars), p.RemotePath)
-			outputPath := absOrRelative(substituteVars(outputPathTpl, vars), p.RemotePath)
+			// job.LogPath : avec placeholder si DataPath défini, absolu sinon.
+			var jobLogPath string
+			if logPath != "" && p.DataPath != "" {
+				jobLogPath = "{temporary_path}/" + p.DataPath + "/" + logPath
+			} else {
+				jobLogPath = absOrRelative(logPath, p.RemotePath)
+			}
+
+			// job.OutputPath : relatif au DataPath si défini, absolu sinon.
+			var jobOutputPath string
+			if p.DataPath != "" {
+				jobOutputPath = outputPath
+			} else {
+				jobOutputPath = absOrRelative(outputPath, p.RemotePath)
+			}
 
 			var outputFiles []string
 			for _, tpl := range outputFilesTpls {
-				if f := absOrRelative(substituteVars(tpl, vars), outputPath); f != "" {
+				if f := absOrRelative(substituteVars(tpl, vars), jobOutputPath); f != "" {
 					outputFiles = append(outputFiles, f)
 				}
 			}
@@ -240,8 +272,8 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				MaxRetries:   maxRetries,
 				RunCommand:   runCmd,
 				RetryCommand: retryCmd,
-				LogPath:      logPath,
-				OutputPath:   outputPath,
+				LogPath:      jobLogPath,
+				OutputPath:   jobOutputPath,
 				NfsJobDir:    nfsSchedulerBase + "/jobs/" + id,
 				OutputFiles:  outputFiles,
 				GPURequirements: internal.GPURequirements{
@@ -346,6 +378,30 @@ func (s *Server) postCancelJob(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs/"+job.ID, http.StatusSeeOther)
 }
 
+func (s *Server) postCancelAllJobs(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	jobs, err := internal.LoadJobs(s.cfg.CachePath, p.ID)
+	if err != nil {
+		http.Error(w, "Failed to load jobs", http.StatusInternalServerError)
+		return
+	}
+
+	for _, job := range jobs {
+		if job.Status == internal.JobPending || job.Status == internal.JobRunning {
+			if err := s.scheduler.CancelJob(job.ID); err != nil {
+				log.Printf("postCancelAllJobs: cancel %s: %v", job.ID, err)
+			}
+		}
+	}
+
+	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs", http.StatusSeeOther)
+}
+
 func (s *Server) postRetryJob(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {
@@ -417,4 +473,62 @@ func substituteVars(s string, vars map[string]string) string {
 		s = strings.ReplaceAll(s, "{"+k+"}", v)
 	}
 	return s
+}
+func (s *Server) postDeleteJob(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	jobID := r.PathValue("id")
+	job, err := internal.LoadJob(s.cfg.CachePath, p.ID, jobID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch job.Status {
+	case internal.JobDone, internal.JobFailed, internal.JobStalled, internal.JobCancelled:
+		// ok
+	default:
+		http.Error(w, "Job is not in a terminal state", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.scheduler.DeleteJob(jobID, p.ID); err != nil {
+		log.Printf("postDeleteJob: %v", err)
+		http.Error(w, "Failed to delete job", http.StatusInternalServerError)
+		return
+	}
+
+	s.scheduler.Events <- internal.JobEvent{
+		Kind: internal.EventJobDeleted,
+		Job:  &internal.Job{ID: jobID},
+	}
+
+	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs", http.StatusSeeOther)
+}
+
+func (s *Server) postDeleteFinishedJobs(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	deleted, err := s.scheduler.DeleteFinishedJobs(p.ID)
+	if err != nil {
+		log.Printf("postDeleteFinishedJobs: %v", err)
+		http.Error(w, "Failed to delete jobs", http.StatusInternalServerError)
+		return
+	}
+
+	for _, id := range deleted {
+		s.scheduler.Events <- internal.JobEvent{
+			Kind: internal.EventJobDeleted,
+			Job:  &internal.Job{ID: id},
+		}
+	}
+
+	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs", http.StatusSeeOther)
 }

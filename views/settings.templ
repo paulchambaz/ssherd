@@ -88,10 +88,38 @@ templ SettingsPage(cfg internal.SchedulerConfig) {
 							class="bg-transparent text-sm font-mono focus:outline-none"
 						/>
 					</div>
-					<div class="flex flex-col gap-1.5 px-4 py-3">
-						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
-							Local prefix <span class="normal-case font-normal text-base-400">(prepended to every local command)</span>
-						</label>
+          <div class="flex flex-col md:flex-row border-b border-base-300">
+            <div class="flex flex-col gap-1.5 px-4 py-3 flex-1 border-b md:border-b-0 md:border-r border-base-300">
+              <label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+                Dispatch start <span class="normal-case font-normal text-base-400">(hour 0–23, inclusive)</span>
+              </label>
+              <input
+                type="number"
+                name="dispatch_start"
+                value={ fmt.Sprintf("%d", cfg.DispatchStart) }
+                min="0"
+                max="23"
+                class="bg-transparent text-sm font-mono focus:outline-none"
+              />
+            </div>
+            <div class="flex flex-col gap-1.5 px-4 py-3 flex-1">
+              <label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+                Dispatch end <span class="normal-case font-normal text-base-400">(hour 0–23, exclusive)</span>
+              </label>
+              <input
+                type="number"
+                name="dispatch_end"
+                value={ fmt.Sprintf("%d", cfg.DispatchEnd) }
+                min="0"
+                max="23"
+                class="bg-transparent text-sm font-mono focus:outline-none"
+              />
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5 px-4 py-3">
+            <label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
+              Local prefix <span class="normal-case font-normal text-base-400">(prepended to every local command)</span>
+            </label>
 						<input
 							type="text"
 							name="local_prefix"

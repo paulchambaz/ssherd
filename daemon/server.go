@@ -60,6 +60,16 @@ func (s *Server) relayEvents() {
 	for event := range s.scheduler.Events {
 		var buf bytes.Buffer
 
+		if event.Kind == internal.EventJobDeleted {
+			var buf2 bytes.Buffer
+			if err := views.JobDeleteFragment(event.Job.ID).Render(context.Background(), &buf2); err != nil {
+				log.Printf("relay: render job delete: %v", err)
+				continue
+			}
+			s.hub.Broadcast(buf2.String())
+			continue
+		}
+
 		if event.Kind == internal.EventVizDone {
 			if err := views.VizResultFragment(event.VizID, event.ComboKey, event.VizErr).Render(context.Background(), &buf); err != nil {
 				log.Printf("relay: render viz result: %v", err)

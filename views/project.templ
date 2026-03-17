@@ -7,6 +7,10 @@ import (
 	"strings"
 )
 
+script navigateTo(url string) {
+	window.location = url
+}
+
 templ ProjectPage(data internal.ProjectPageData) {
 	@Base() {
 		@Header() {
@@ -129,9 +133,25 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 			<h2 class="text-base font-semibold">Jobs</h2>
 			<span class="text-sm text-base-400">{ fmt.Sprintf("%d total", len(jobs)) }</span>
 		</div>
-		<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/new") } class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
-			New batch
-		</a>
+		<div class="flex items-center gap-2">
+			<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/delete-finished") }>
+				<button
+					type="submit"
+					class="px-4 py-2 text-sm font-medium text-red-500 border border-red-500 rounded-md hover:bg-red-500/20"
+					onclick="return confirm('Delete all finished jobs?')"
+				>Delete all</button>
+			</form>
+			<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/cancel-all") }>
+				<button
+					type="submit"
+					class="px-4 py-2 text-sm font-medium text-red-500 border border-red-500 rounded-md hover:bg-red-500/20"
+					onclick="return confirm('Cancel all running and pending jobs?')"
+				>Cancel all</button>
+			</form>
+			<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/new") } class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
+				New batch
+			</a>
+		</div>
 	</div>
 	<div class="border border-base-300 rounded-md overflow-x-auto">
 		<!-- En-tête -->
@@ -149,7 +169,11 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 			</div>
 		} else {
 			for _, j := range jobs {
-				<div id={ "job-row-" + j.ID } class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm">
+				<div
+					id={ "job-row-" + j.ID }
+					class="flex flex-col gap-1 md:grid md:grid-cols-[minmax(0,2fr)_120px_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center px-4 py-3 border-t border-base-300 hover:bg-base-50 text-sm cursor-pointer"
+					onclick={ navigateTo("/projects/" + p.Slug + "/jobs/" + j.ID) }
+				>
 					@jobRowCells(j)
 				</div>
 			}

@@ -9,11 +9,13 @@ import (
 	"time"
 )
 
+
 type Project struct {
 	ID         string    `json:"id"`
 	Slug       string    `json:"slug"`
 	Name       string    `json:"name"`
 	RemotePath string    `json:"remote_path"`
+	DataPath   string    `json:"data_path,omitempty"`
 	GitRepo    string    `json:"git_repo"`
 	Branch     string    `json:"branch"`
 	GitToken   string    `json:"git_token"`

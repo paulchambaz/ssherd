@@ -36,6 +36,7 @@ type Client struct {
 type LaunchParams struct {
 	Job     *Job
 	Project *Project
+	Machine *Machine
 }
 
 func Connect(cfg SSHConfig) (*Client, error) {
@@ -207,16 +208,38 @@ func (c *Client) FinalizeLogsToLocal(nfsJobDir, localJobDir string) error {
 
 func (c *Client) RunBackground(params LaunchParams) error {
 	job := params.Job
+	machine := params.Machine
+	project := params.Project
+
+	runCommand := job.RunCommand
+	if machine != nil && machine.TemporaryPath != "" {
+		runCommand = strings.ReplaceAll(runCommand, "{temporary_path}", machine.TemporaryPath)
+	}
+
+	var temporaryOutputDir string
+	if machine != nil && machine.TemporaryPath != "" &&
+		project != nil && project.DataPath != "" && job.OutputPath != "" {
+		temporaryOutputDir = machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath
+	}
+
+	stdoutPath := job.NfsJobDir + "/stdout.log"
+	stderrPath := job.NfsJobDir + "/stderr.log"
+	mkdirExtra := ""
+	if temporaryOutputDir != "" {
+		mkdirExtra = fmt.Sprintf("mkdir -p %s\n", temporaryOutputDir)
+	}
+
+	// Intervalle heartbeat : π/2 minutes = 30π secondes exactement.
 	script := fmt.Sprintf(`#!/usr/bin/env zsh
 JOB_DIR=%s
 mkdir -p "$JOB_DIR"
-echo $$ > "$JOB_DIR/pid"
+%secho $$ > "$JOB_DIR/pid"
 echo "running" > "$JOB_DIR/status"
-git -C %s reset --hard HEAD >> "$JOB_DIR/stdout.log" 2>> "$JOB_DIR/stderr.log"
-echo "=== job start ===" >> "$JOB_DIR/stdout.log"
-(while true; do date -Iseconds > "$JOB_DIR/heartbeat"; sleep 120; done) &
+(while true; do date -Iseconds > "$JOB_DIR/heartbeat"; sleep 94.247779607693797; done) &
 HEARTBEAT_PID=$!
-%s >> "$JOB_DIR/stdout.log" 2>> "$JOB_DIR/stderr.log"
+git -C %s reset --hard HEAD >> %s 2>> %s
+echo "=== job start ===" >> %s
+%s >> %s 2>> %s
 EXIT=$?
 kill $HEARTBEAT_PID 2>/dev/null
 echo $EXIT > "$JOB_DIR/exit_code"
@@ -225,7 +248,8 @@ if [ $EXIT -eq 0 ]; then
 else
     echo "failed" > "$JOB_DIR/status"
 fi
-`, job.NfsJobDir, params.Project.RemotePath, job.RunCommand)
+`, job.NfsJobDir, mkdirExtra, project.RemotePath, stdoutPath, stderrPath, stdoutPath, runCommand, stdoutPath, stderrPath)
+
 	encoded := base64.StdEncoding.EncodeToString([]byte(script))
 	cmd := fmt.Sprintf(
 		`mkdir -p %s && printf '%%s' %s | base64 -d > %s/run.sh && nohup zsh -i %s/run.sh > /dev/null 2>&1 &`,

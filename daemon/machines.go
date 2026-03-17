@@ -210,14 +210,15 @@ func (s *Server) postMachines(w http.ResponseWriter, r *http.Request) {
 		gpuModel := strings.TrimSpace(r.FormValue("gpu_model"))
 
 		m := &internal.Machine{
-			ID:       id,
-			Name:     name,
-			Hostname: hostname,
-			User:     user,
-			Protocol: proxyProtocol,
-			ProxyID:  proxyID,
-			GPUModel: gpuModel,
-			Status:   internal.MachineStatusUnknown,
+			ID:            id,
+			Name:          name,
+			Hostname:      hostname,
+			User:          user,
+			Protocol:      proxyProtocol,
+			ProxyID:       proxyID,
+			GPUModel:      gpuModel,
+			TemporaryPath: strings.TrimSpace(r.FormValue("temporary_path")),
+			Status:        internal.MachineStatusUnknown,
 		}
 		store.Machines = append(store.Machines, m)
 	}

@@ -81,6 +81,13 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	if d, err := time.ParseDuration(r.FormValue("viz_interval")); err == nil && d > 0 {
 		cfg.VizInterval = d
 	}
+
+	if v, err := strconv.Atoi(r.FormValue("dispatch_start")); err == nil && v >= 0 && v <= 23 {
+		cfg.DispatchStart = v
+	}
+	if v, err := strconv.Atoi(r.FormValue("dispatch_end")); err == nil && v >= 0 && v <= 23 {
+		cfg.DispatchEnd = v
+	}
 	cfg.LocalPrefix = strings.TrimSpace(r.FormValue("local_prefix"))
 	cfg.NtfyURL = strings.TrimSpace(r.FormValue("ntfy_url"))
 	cfg.NtfyChannel = strings.TrimSpace(r.FormValue("ntfy_channel"))

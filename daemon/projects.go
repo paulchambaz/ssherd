@@ -59,6 +59,7 @@ func (s *Server) postProject(w http.ResponseWriter, r *http.Request) {
 		Name:       name,
 		Slug:       internal.Slugify(name),
 		RemotePath: strings.TrimSpace(r.FormValue("remote_path")),
+		DataPath:   strings.TrimSpace(r.FormValue("data_path")),
 		GitRepo:    strings.TrimSpace(r.FormValue("git_repo")),
 		Branch:     branch,
 		GitToken:   strings.TrimSpace(r.FormValue("git_token")),
@@ -107,6 +108,7 @@ func (s *Server) postUpdateProject(w http.ResponseWriter, r *http.Request) {
 	p.Name = strings.TrimSpace(r.FormValue("name"))
 	p.Slug = internal.Slugify(p.Name)
 	p.RemotePath = strings.TrimSpace(r.FormValue("remote_path"))
+	p.DataPath = strings.TrimSpace(r.FormValue("data_path"))
 	p.GitRepo = strings.TrimSpace(r.FormValue("git_repo"))
 	p.Branch = branch
 	p.GitToken = strings.TrimSpace(r.FormValue("git_token"))

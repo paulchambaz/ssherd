@@ -76,7 +76,6 @@ func (s *Scheduler) vizTickProject(project *Project) {
 // Elle retourne immédiatement : chaque combo est une goroutine indépendante
 // qui émet EventVizDone à la fin (succès ou erreur).
 func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job, localRepoDir string) {
-	jobsWriting := runningJobsWriteToVizData(jobs, viz, project)
 	localDataPath := ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
 
 	for _, combo := range viz.AllCombos() {
@@ -87,21 +86,14 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 		}
 
 		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
-			// Déjà en cours de génération par une autre goroutine, on saute.
 			continue
 		}
 
-		combo := combo    // capture pour la goroutine
-		jw := jobsWriting // capture pour la goroutine
+		combo := combo
 		go func() {
 			defer s.clearVizGenerating(viz.ID, combo.Key)
 
-			var err error
-			if jw {
-				err = s.generateVizRemote(project, viz, combo, localRepoDir)
-			} else {
-				err = s.generateVizLocal(project, viz, combo, localRepoDir)
-			}
+			err := s.generateVizLocal(project, viz, combo, localRepoDir)
 
 			vizErr := ""
 			if err != nil {
@@ -120,55 +112,36 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode string) {
 	localRepoDir := filepath.Join(s.cachePath, project.ID, "repo")
 
-	s.mu.RLock()
-	var projectJobs []*Job
-	for _, j := range s.jobs {
-		if j.ProjectID == project.ID {
-			projectJobs = append(projectJobs, j)
+	// mode est ignoré — toutes les visualisations sont générées en local.
+	// Les données sont rapatriées périodiquement depuis les machines distantes.
+	if mode == "local" {
+		s.mu.RLock()
+		var projectJobs []*Job
+		for _, j := range s.jobs {
+			if j.ProjectID == project.ID {
+				projectJobs = append(projectJobs, j)
+			}
 		}
-	}
-	s.mu.RUnlock()
-
-	jobsWriting := runningJobsWriteToVizData(projectJobs, viz, project)
-
-	useRemote := viz.BuildRemote
-	switch mode {
-	case "local":
-		useRemote = false
-		if jobsWriting {
+		s.mu.RUnlock()
+		if runningJobsWriteToVizData(projectJobs, viz, project) {
 			log.Printf("viz: WARNING: force-local requested for %s but jobs are still writing to data — proceeding anyway", viz.Name)
-		}
-	case "remote":
-		useRemote = true
-	default: // "auto"
-		if jobsWriting {
-			useRemote = true
 		}
 	}
 
 	for _, combo := range viz.AllCombos() {
 		combo := combo
-		ur := useRemote
 
 		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
-			// Déjà en cours — on signale quand même "generating" pour que l'UI
-			// affiche le spinner si ce combo est la sélection courante.
 			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
 			continue
 		}
 
-		// Signal immédiat : le spinner s'affiche avant même que la goroutine démarre.
 		s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
 
 		go func() {
 			defer s.clearVizGenerating(viz.ID, combo.Key)
 
-			var err error
-			if ur {
-				err = s.generateVizRemote(project, viz, combo, localRepoDir)
-			} else {
-				err = s.generateVizLocal(project, viz, combo, localRepoDir)
-			}
+			err := s.generateVizLocal(project, viz, combo, localRepoDir)
 
 			vizErr := ""
 			if err != nil {
@@ -236,123 +209,10 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 	}
 	if err := buildAndRun(pngVizCmd); err != nil {
 		log.Printf("viz: PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
+		return fmt.Errorf("SVG ok, PNG failed: %w", err)
 	}
 
 	log.Printf("viz: generated local %s combo %s", viz.Name, combo.Key)
-	return nil
-}
-
-func (s *Scheduler) generateVizRemote(project *Project, viz *Visualization, combo VizCombo, localRepoDir string) error {
-	machine, proxy, err := s.findMachineForRsync()
-	if err != nil {
-		return fmt.Errorf("no machine available for remote viz: %w", err)
-	}
-
-	client, err := Connect(SSHConfig{
-		GatewayHost:     proxy.Hostname,
-		GatewayPort:     proxy.Port,
-		GatewayUser:     proxy.User,
-		GatewayPassword: proxy.Password,
-		TargetHost:      machine.Hostname,
-		TargetPort:      22,
-		TargetUser:      machine.User,
-		TargetPassword:  proxy.Password,
-		ConnectTimeout:  30 * time.Second,
-	})
-	if err != nil {
-		return fmt.Errorf("connect to %s: %w", machine.Name, err)
-	}
-	defer client.Close()
-
-	if err := client.GitPull(project); err != nil {
-		return fmt.Errorf("git pull before remote viz: %w", err)
-	}
-
-	present, err := checkDataOnRemote(client, viz.DataPath)
-	if err != nil {
-		return fmt.Errorf("check remote data: %w", err)
-	}
-	if !present {
-		return fmt.Errorf("data not available on remote (%s)", viz.DataPath)
-	}
-
-	var axisParts []string
-	for _, arg := range combo.Args {
-		for _, part := range strings.Fields(arg) {
-			axisParts = append(axisParts, shellEscape(part))
-		}
-	}
-
-	runRemote := func(vizCmd, outputTpl string) (string, error) {
-		resolvedCmd := buildVizCommand(vizCmd, combo, viz)
-		cmdStr := fmt.Sprintf("cd %s && %s %s",
-			shellEscape(project.RemotePath),
-			resolvedCmd,
-			strings.Join(axisParts, " "),
-		)
-		_, stderr, code, err := client.Run(cmdStr)
-		if err != nil || code != 0 {
-			return "", fmt.Errorf("remote viz failed (code %d)\n  cmd: %s\n  output: %s", code, cmdStr, stderr)
-		}
-		remoteOutputPath := filepath.Join(project.RemotePath, buildVizCommand(outputTpl, combo, viz))
-		return remoteOutputPath, nil
-	}
-
-	fetchAndSave := func(remotePath, localPath string) error {
-		data, err := client.ReadRemoteFileBinary(remotePath)
-		if err != nil {
-			return fmt.Errorf("read remote file %s: %w", remotePath, err)
-		}
-		if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
-			return fmt.Errorf("mkdir: %w", err)
-		}
-		if err := os.WriteFile(localPath, data, 0644); err != nil {
-			return fmt.Errorf("write %s: %w", localPath, err)
-		}
-		client.Run(fmt.Sprintf("rm -f %s", shellEscape(remotePath)))
-		return nil
-	}
-
-	sel := map[string]string{}
-	for i, ax := range viz.Axes {
-		if i < len(combo.Args) {
-			sel[ax.Name] = combo.Args[i]
-		}
-	}
-
-	var svgVizCmd, pngVizCmd, svgOutputTpl, pngOutputTpl string
-	if strings.Contains(viz.VizCommand, ".png") {
-		pngVizCmd = viz.VizCommand
-		svgVizCmd = strings.ReplaceAll(viz.VizCommand, ".png", ".svg")
-		pngOutputTpl = viz.OutputFileTemplate
-		svgOutputTpl = strings.ReplaceAll(viz.OutputFileTemplate, ".png", ".svg")
-	} else {
-		svgVizCmd = viz.VizCommand
-		pngVizCmd = strings.ReplaceAll(viz.VizCommand, ".svg", ".png")
-		svgOutputTpl = viz.OutputFileTemplate
-		pngOutputTpl = strings.ReplaceAll(viz.OutputFileTemplate, ".svg", ".png")
-	}
-
-	svgRemotePath, err := runRemote(svgVizCmd, svgOutputTpl)
-	if err != nil {
-		return err
-	}
-	svgLocalPath := viz.ResolveOutputPath(localRepoDir, sel)
-	if err := fetchAndSave(svgRemotePath, svgLocalPath); err != nil {
-		return err
-	}
-
-	pngRemotePath, err := runRemote(pngVizCmd, pngOutputTpl)
-	if err != nil {
-		log.Printf("viz: remote PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
-	} else {
-		pngLocalPath := VizLocalPNGPath(svgLocalPath)
-		if err := fetchAndSave(pngRemotePath, pngLocalPath); err != nil {
-			log.Printf("viz: fetch remote PNG failed for %s combo %s: %v", viz.Name, combo.Key, err)
-		}
-	}
-
-	log.Printf("viz: generateVizRemote: done %s combo=%s", viz.Name, combo.Key)
 	return nil
 }
 
@@ -409,17 +269,6 @@ func vizNeedsRegen(outputPath, dataDir string) bool {
 		return nil
 	})
 	return needsRegen
-}
-
-func checkDataOnRemote(client *Client, remotePath string) (bool, error) {
-	if remotePath == "" {
-		return false, nil
-	}
-	_, _, code, err := client.Run(fmt.Sprintf("test -e %s", shellEscape(remotePath)))
-	if err != nil {
-		return false, err
-	}
-	return code == 0, nil
 }
 
 func buildVizCommand(vizCommand string, combo VizCombo, viz *Visualization) string {

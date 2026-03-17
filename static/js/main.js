@@ -165,6 +165,12 @@ onReady(() => {
       toggleBtn.textContent = previewExpanded ? "Show less" : "Show all";
     }
 
+    const logArg = (form.querySelector('[name="log_argument"]') || {}).value || '';
+    const outputArg = (form.querySelector('[name="output_argument"]') || {}).value || '';
+    const logPathTplVal = (form.querySelector('[name="log_path"]') || {}).value || '';
+    const outputPathTplVal = (form.querySelector('[name="output_path"]') || {}).value || '';
+    const dataPath = form.dataset.dataPath || '';
+
     const allLines = [];
     for (const combo of combos) {
       const ablationParts = combo.map((v) => sanitizeAxisValue(v));
@@ -180,8 +186,20 @@ onReady(() => {
         });
 
         const tokens = [base, ...combo, seedFlag, String(s)].filter(Boolean);
-        const cmd = substituteVars(tokens.join(" "), vars);
-        allLines.push('<div class="truncate">' + esc(cmd) + "</div>");
+        let cmd = substituteVars(tokens.join(' '), vars);
+
+        if (logArg && logPathTplVal) {
+          const resolvedLog = substituteVars(logPathTplVal, vars);
+          const prefix = dataPath ? '{temporary_path}/' + dataPath + '/' : '';
+          cmd += ' ' + logArg + ' ' + prefix + resolvedLog;
+        }
+        if (outputArg && outputPathTplVal) {
+          const resolvedOutput = substituteVars(outputPathTplVal, vars);
+          const prefix = dataPath ? '{temporary_path}/' + dataPath + '/' : '';
+          cmd += ' ' + outputArg + ' ' + prefix + resolvedOutput;
+        }
+
+        allLines.push('<div class="truncate">' + esc(cmd) + '</div>');
       }
     }
 
@@ -278,8 +296,12 @@ onReady(() => {
     updatePreview();
   }
 
-  ["base_command", "seed_flag", "start_seed", "num_seeds"].forEach((id) => {
+  ["base_command", "seed_flag", "start_seed", "num_seeds"].forEach(id => {
     const el = document.getElementById(id);
+    if (el) el.addEventListener("input", updatePreview);
+  });
+  ["log_argument", "output_argument", "log_path", "output_path"].forEach(name => {
+    const el = form.querySelector('[name="' + name + '"]');
     if (el) el.addEventListener("input", updatePreview);
   });
 
@@ -307,6 +329,8 @@ onReady(() => {
       setVal('[name="min_vram"]', state.min_vram);
       setVal('[name="max_retries"]', state.max_retries);
       setVal('[name="retry_suffix"]', state.retry_suffix);
+      setVal('[name="log_argument"]', state.log_argument);
+      setVal('[name="output_argument"]', state.output_argument);
 
       const baseCmd = document.getElementById("base_command");
       if (baseCmd && state.base_command != null)
@@ -346,30 +370,6 @@ onReady(() => {
 });
 
 // ─── Viz form (new visualization page) ───────────────────────────────────────
-
-window.toggleVizMode = function() {
-  const toggle = document.getElementById("viz_mode_toggle");
-  const thumb = document.getElementById("viz_mode_thumb");
-  const hidden = document.getElementById("viz_build_remote");
-  const labelLocal = document.getElementById("viz_mode_label_local");
-  const labelRemote = document.getElementById("viz_mode_label_remote");
-  if (!toggle) return;
-
-  const isRemote = toggle.getAttribute("aria-checked") === "true";
-  const next = !isRemote;
-
-  toggle.setAttribute("aria-checked", next ? "true" : "false");
-  toggle.classList.toggle("bg-accent-500", next);
-  toggle.classList.toggle("bg-base-200", !next);
-  thumb.classList.toggle("translate-x-4", next);
-  thumb.classList.toggle("translate-x-0", !next);
-  labelLocal.className =
-    "text-sm font-medium " + (next ? "text-base-400" : "text-base-700");
-  labelRemote.className =
-    "text-sm font-medium " + (next ? "text-base-700" : "text-base-400");
-  if (hidden) hidden.value = next ? "true" : "false";
-};
-
 onReady(() => {
   const form = document.getElementById("viz-form");
   if (!form) return;
@@ -618,13 +618,6 @@ onReady(() => {
       const vizCmd = document.getElementById("viz_command_input");
       if (vizCmd && state.viz_command != null) vizCmd.value = state.viz_command;
 
-      if (state.build_remote === true) {
-        const toggle = document.getElementById("viz_mode_toggle");
-        if (toggle && toggle.getAttribute("aria-checked") !== "true") {
-          window.toggleVizMode();
-        }
-      }
-
       if (Array.isArray(state.axes)) {
         state.axes.forEach((ax) => {
           addVizAxis(ax.name || "", (ax.values || []).join("\n"));
@@ -840,36 +833,42 @@ onReady(() => {
   //
   // htmx-ext-ws fait un OOB swap sur #viz-result-{vizID} à chaque EventVizDone.
   // On observe les changements d'attributs de cet élément pour réagir.
+  function processVizResult(node) {
+    const comboKey = node.dataset.comboKey || "";
+    const vizErr = node.dataset.error || "";
+    const isCurrent = comboKey === currentComboKey();
+
+    if (vizErr === "generating") {
+      if (isCurrent) showSpinner();
+      return;
+    }
+
+    if (vizErr !== "") {
+      if (isCurrent) showError(vizErr);
+      return;
+    }
+
+    availableCombos.add(comboKey);
+    if (isCurrent) {
+      showImage(buildUrl());
+    }
+  }
+
   const resultEl = document.getElementById("viz-result-" + vizId);
-  if (resultEl) {
-    const observer = new MutationObserver(() => {
-      const comboKey = resultEl.dataset.comboKey || "";
-      const vizErr = resultEl.dataset.error || "";
-      const isCurrent = comboKey === currentComboKey();
-
-      if (vizErr === "generating") {
-        if (isCurrent) showSpinner();
-        // Pour les combos non courants on note juste qu'ils sont en cours —
-        // rien à afficher, mais on ne les marque pas encore disponibles.
-        return;
+  if (resultEl && resultEl.parentNode) {
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (
+            node.nodeType === Node.ELEMENT_NODE &&
+            node.id === "viz-result-" + vizId
+          ) {
+            processVizResult(node);
+          }
+        }
       }
-
-      if (vizErr !== "") {
-        // Erreur de génération.
-        if (isCurrent) showError(vizErr);
-        return;
-      }
-
-      // Succès : marquer le combo disponible.
-      availableCombos.add(comboKey);
-      if (isCurrent) {
-        showImage(buildUrl());
-      }
-      // Si ce n'est pas le combo courant, le fichier est disponible pour
-      // quand l'utilisateur changera la sélection — loadOutput() le trouvera
-      // dans availableCombos et n'aura pas besoin de faire un HEAD.
     });
-    observer.observe(resultEl, { attributes: true });
+    observer.observe(resultEl.parentNode, { childList: true });
   }
 
   // ── Initialisation ────────────────────────────────────────────────────────
