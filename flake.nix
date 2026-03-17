@@ -26,6 +26,7 @@
           nix
           busybox
           git
+          cacert
         ];
 
         devPkgs = with pkgs; [
@@ -88,7 +89,11 @@
               ExposedPorts = {
                 "1321/tcp" = { };
               };
-              Env = [ "SSHERD_SERVER_HOST=0.0.0.0" ];
+              Env = [
+                "SSHERD_SERVER_HOST=0.0.0.0"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
             };
           };
         };
