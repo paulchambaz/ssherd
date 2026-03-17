@@ -25,6 +25,7 @@
         dockerPkgs = with pkgs; [
           nix
           busybox
+          git
         ];
 
         devPkgs = with pkgs; [
