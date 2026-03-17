@@ -27,6 +27,7 @@
           git
           cacert
           uv
+          python313
           texlive.combined.scheme-full
         ];
 
@@ -94,6 +95,7 @@
                 "SSHERD_SERVER_HOST=0.0.0.0"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "UV_PYTHON_PREFERENCE=only-system"
               ];
             };
           };
