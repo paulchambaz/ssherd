@@ -71,7 +71,13 @@
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
               paths = dockerPkgs;
-              pathsToLink = [ "/bin" ];
+              pathsToLink = [
+                "/bin"
+                "/usr/bin"
+                "/usr/lib"
+                "/usr/share"
+                "/etc"
+              ];
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
