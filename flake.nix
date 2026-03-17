@@ -23,10 +23,11 @@
         ];
 
         dockerPkgs = with pkgs; [
-          nix
           busybox
           git
           cacert
+          uv
+          texlive.combined.scheme-full
         ];
 
         devPkgs = with pkgs; [
