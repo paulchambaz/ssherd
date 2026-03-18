@@ -21,7 +21,6 @@
           tailwindcss_4
         ];
         dockerPkgs = with pkgs; [
-          nix
           busybox
           git
           cacert
@@ -34,7 +33,6 @@
           hivemind
           watchman
         ];
-
         ssherd = pkgs.buildGoModule {
           pname = "ssherd";
           version = "0.1.0";
@@ -61,7 +59,6 @@
       {
         packages = {
           default = ssherd;
-
           docker = pkgs.dockerTools.buildImage {
             name = "ssherd";
             tag = "latest";
@@ -89,9 +86,10 @@
                 "SSHERD_SERVER_HOST=0.0.0.0"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-                "NIX_CONFIG=experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root\nmax-jobs = auto\ncores = 0"
+                "NIX_CONFIG=experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root"
                 "HOME=/root"
                 "USER=root"
+                "PATH=${pkgs.nix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
               ];
             };
           };
