@@ -13,7 +13,6 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-
         buildPkgs = with pkgs; [
           pkg-config
           templ
@@ -21,16 +20,14 @@
           go
           tailwindcss_4
         ];
-
         dockerPkgs = with pkgs; [
+          nix
           busybox
           git
           cacert
-          uv
-          python313
-          texlive.combined.scheme-full
+          bash
+          coreutils
         ];
-
         devPkgs = with pkgs; [
           just
           air
@@ -38,26 +35,30 @@
           watchman
         ];
 
+        nixConf = pkgs.writeText "nix.conf" ''
+          experimental-features = nix-command flakes
+          sandbox = false
+          trusted-users = root
+          max-jobs = auto
+          cores = 0
+        '';
+
         ssherd = pkgs.buildGoModule {
           pname = "ssherd";
           version = "0.1.0";
           src = ./.;
           vendorHash = "sha256-j+wTXFuMlALs82PdAhZsm6LBtFr4a9MBqJuaFvIN92o=";
-
           nativeBuildInputs = buildPkgs;
-
           postPatch = ''
             tailwindcss --input static/css/main.css --output static/css/styles.css --minify --optimize
             templ generate
           '';
-
           buildPhase = ''
             go test ./tests/...
             mkdir -p bin
             go build -o bin/ssherd .
             scdoc < ssherd.1.scd | sed "s/1980-01-01/$(date '+%B %Y')/" > ssherd.1
           '';
-
           installPhase = ''
             mkdir -p $out/dist/{usr/bin,usr/share/man/man1,etc/ssherd}
             cp bin/ssherd $out/dist/usr/bin/
@@ -74,17 +75,19 @@
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
               paths = dockerPkgs;
-              pathsToLink = [
-                "/bin"
-                "/usr/bin"
-                "/usr/lib"
-                "/usr/share"
-                "/etc"
-              ];
+              pathsToLink = [ "/" ];
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
-              chmod 755 var/log/ssherd
+              mkdir -p etc/nix
+              cp ${nixConf} etc/nix/nix.conf
+              mkdir -p nix/var/nix/profiles/per-user/root
+              mkdir -p nix/var/nix/gcroots/auto
+              mkdir -p nix/var/nix/temproots
+              mkdir -p nix/var/nix/userpool
+              mkdir -p nix/var/nix/db
+              mkdir -p root
+              mkdir -p tmp
             '';
             config = {
               Cmd = [ "${ssherd}/dist/usr/bin/ssherd" ];
@@ -95,7 +98,10 @@
                 "SSHERD_SERVER_HOST=0.0.0.0"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-                "UV_PYTHON_PREFERENCE=only-system"
+                "NIX_CONF_DIR=/etc/nix"
+                "HOME=/root"
+                "USER=root"
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
               ];
             };
           };
