@@ -75,8 +75,9 @@
             tag = "latest";
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
-              paths = dockerPkgs ++ [ nixConf ];
+              paths = [ nixConf ] ++ dockerPkgs;
               pathsToLink = [ "/" ];
+              ignoreCollisions = true;
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
