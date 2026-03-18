@@ -35,7 +35,7 @@
           watchman
         ];
 
-        nixConf = pkgs.writeText "nix.conf" ''
+        nixConf = pkgs.writeTextDir "etc/nix/nix.conf" ''
           experimental-features = nix-command flakes
           sandbox = false
           trusted-users = root
@@ -69,18 +69,17 @@
       {
         packages = {
           default = ssherd;
+
           docker = pkgs.dockerTools.buildImage {
             name = "ssherd";
             tag = "latest";
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
-              paths = dockerPkgs;
+              paths = dockerPkgs ++ [ nixConf ];
               pathsToLink = [ "/" ];
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
-              mkdir -p etc/nix
-              cp ${nixConf} etc/nix/nix.conf
               mkdir -p nix/var/nix/profiles/per-user/root
               mkdir -p nix/var/nix/gcroots/auto
               mkdir -p nix/var/nix/temproots
