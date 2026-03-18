@@ -35,14 +35,6 @@
           watchman
         ];
 
-        nixConf = pkgs.writeTextDir "etc/nix/nix.conf" ''
-          experimental-features = nix-command flakes
-          sandbox = false
-          trusted-users = root
-          max-jobs = auto
-          cores = 0
-        '';
-
         ssherd = pkgs.buildGoModule {
           pname = "ssherd";
           version = "0.1.0";
@@ -75,9 +67,8 @@
             tag = "latest";
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
-              paths = [ nixConf ] ++ dockerPkgs;
+              paths = dockerPkgs;
               pathsToLink = [ "/" ];
-              ignoreCollisions = true;
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
@@ -98,10 +89,9 @@
                 "SSHERD_SERVER_HOST=0.0.0.0"
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 "GIT_SSL_CAINFO=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-                "NIX_CONF_DIR=/etc/nix"
+                "NIX_CONFIG=experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root\nmax-jobs = auto\ncores = 0"
                 "HOME=/root"
                 "USER=root"
-                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
               ];
             };
           };
