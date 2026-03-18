@@ -2,12 +2,17 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    docker-nixpkgs = {
+      url = "github:nix-community/docker-nixpkgs";
+      flake = false;
+    };
   };
   outputs =
     {
       self,
       nixpkgs,
       flake-utils,
+      docker-nixpkgs,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -19,13 +24,6 @@
           scdoc
           go
           tailwindcss_4
-        ];
-        dockerPkgs = with pkgs; [
-          busybox
-          git
-          cacert
-          bash
-          coreutils
         ];
         devPkgs = with pkgs; [
           just
@@ -55,6 +53,24 @@
             cp ssherd.1 $out/dist/usr/share/man/man1/
           '';
         };
+        buildImageWithNix = import ("${docker-nixpkgs}" + "/images/nix/default.nix");
+        nixBaseImage = buildImageWithNix {
+          inherit (pkgs)
+            dockerTools
+            bashInteractive
+            cacert
+            coreutils
+            curl
+            gnutar
+            gzip
+            iana-etc
+            nix
+            openssh
+            xz
+            ;
+          gitReallyMinimal = pkgs.git;
+          extraContents = [ ];
+        };
       in
       {
         packages = {
@@ -62,20 +78,15 @@
           docker = pkgs.dockerTools.buildImage {
             name = "ssherd";
             tag = "latest";
+            fromImage = nixBaseImage;
             copyToRoot = pkgs.buildEnv {
               name = "ssherd-env";
-              paths = dockerPkgs;
+              paths = [ ssherd ];
               pathsToLink = [ "/" ];
             };
             extraCommands = ''
               mkdir -p var/log/ssherd
-              mkdir -p nix/var/nix/profiles/per-user/root
-              mkdir -p nix/var/nix/gcroots/auto
-              mkdir -p nix/var/nix/temproots
-              mkdir -p nix/var/nix/userpool
-              mkdir -p nix/var/nix/db
               mkdir -p root
-              mkdir -p tmp
             '';
             config = {
               Cmd = [ "${ssherd}/dist/usr/bin/ssherd" ];
@@ -89,7 +100,6 @@
                 "NIX_CONFIG=experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root"
                 "HOME=/root"
                 "USER=root"
-                "PATH=${pkgs.nix}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
               ];
             };
           };
