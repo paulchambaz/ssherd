@@ -219,10 +219,19 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 			logPath := substituteVars(logPathTpl, vars)
 			outputPath := substituteVars(outputPathTpl, vars)
 
-			// Appendre les arguments log/output si configurés et que DataPath est défini.
-			if logArgument != "" && logPath != "" && p.DataPath != "" {
-				baseCmd += " " + logArgument + " {temporary_path}/" + p.DataPath + "/" + logPath
+			id, err := internal.GenerateID()
+			if err != nil {
+				http.Error(w, "Failed to generate job id", http.StatusInternalServerError)
+				return
 			}
+
+			nfsJobDir := nfsSchedulerBase + "/jobs/" + id
+
+			// --log pointe vers le NFS job dir — lisible directement par le watcher.
+			if logArgument != "" && logPath != "" {
+				baseCmd += " " + logArgument + " " + nfsJobDir + "/" + logPath
+			}
+			// --output pointe vers le temporary local de la machine.
 			if outputArgument != "" && outputPath != "" && p.DataPath != "" {
 				baseCmd += " " + outputArgument + " {temporary_path}/" + p.DataPath + "/" + outputPath
 			}
@@ -233,10 +242,10 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				retryCmd += " " + retrySuffix
 			}
 
-			// job.LogPath : avec placeholder si DataPath défini, absolu sinon.
+			// job.LogPath pointe directement vers le NFS — pas de placeholder à résoudre.
 			var jobLogPath string
-			if logPath != "" && p.DataPath != "" {
-				jobLogPath = "{temporary_path}/" + p.DataPath + "/" + logPath
+			if logArgument != "" && logPath != "" {
+				jobLogPath = nfsJobDir + "/" + logPath
 			} else {
 				jobLogPath = absOrRelative(logPath, p.RemotePath)
 			}
@@ -256,12 +265,6 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			id, err := internal.GenerateID()
-			if err != nil {
-				http.Error(w, "Failed to generate job id", http.StatusInternalServerError)
-				return
-			}
-
 			job := &internal.Job{
 				ID:           id,
 				ProjectID:    p.ID,
@@ -274,7 +277,7 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 				RetryCommand: retryCmd,
 				LogPath:      jobLogPath,
 				OutputPath:   jobOutputPath,
-				NfsJobDir:    nfsSchedulerBase + "/jobs/" + id,
+				NfsJobDir:    nfsJobDir,
 				OutputFiles:  outputFiles,
 				GPURequirements: internal.GPURequirements{
 					MinVRAMMB:    minVRAM,

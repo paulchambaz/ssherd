@@ -558,18 +558,6 @@ func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, stor
 		}
 	}
 
-	if machine.TemporaryPath != "" {
-		if strings.Contains(job.LogPath, "{temporary_path}") {
-			job.LogPath = strings.ReplaceAll(job.LogPath, "{temporary_path}", machine.TemporaryPath)
-		} else if project.DataPath != "" && job.OutputPath != "" {
-			// fallback pour les jobs créés avant #19b
-			job.LogPath = machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath + "/progress.json"
-		}
-		if err := SaveJob(s.cachePath, job); err != nil {
-			log.Printf("scheduler: launchJob: update LogPath for job %s: %v", job.ID, err)
-		}
-	}
-
 	if err := client.RunBackground(LaunchParams{Job: job, Project: project, Machine: machine}); err != nil {
 		log.Printf("scheduler: launchJob: launch failed for job %s on %s: %v", job.ID, machine.Name, err)
 		clearLaunching()
@@ -1065,6 +1053,7 @@ func (s *Scheduler) DeleteFinishedJobs(projectID string) ([]string, error) {
 	var deleted []string
 	var remaining []*Job
 
+	// Supprimer les jobs terminés présents en mémoire.
 	for _, j := range s.jobs {
 		if j.ProjectID != projectID {
 			remaining = append(remaining, j)
@@ -1082,8 +1071,36 @@ func (s *Scheduler) DeleteFinishedJobs(projectID string) ([]string, error) {
 			remaining = append(remaining, j)
 		}
 	}
-
 	s.jobs = remaining
+
+	// Supprimer les jobs terminés présents sur disque mais pas en mémoire
+	// (done/failed/stalled/cancelled ne sont pas chargés au démarrage).
+	seen := make(map[string]bool, len(deleted)+len(s.jobs))
+	for _, id := range deleted {
+		seen[id] = true
+	}
+	for _, j := range s.jobs {
+		seen[j.ID] = true
+	}
+
+	allJobs, err := LoadJobs(s.cachePath, projectID)
+	if err != nil {
+		return deleted, nil
+	}
+	for _, j := range allJobs {
+		if seen[j.ID] {
+			continue
+		}
+		switch j.Status {
+		case JobDone, JobFailed, JobStalled, JobCancelled:
+			if err := internal_deleteJobDir(s.cachePath, projectID, j.ID); err != nil {
+				log.Printf("scheduler: DeleteFinishedJobs: disk: %v", err)
+			} else {
+				deleted = append(deleted, j.ID)
+			}
+		}
+	}
+
 	return deleted, nil
 }
 

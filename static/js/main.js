@@ -165,11 +165,15 @@ onReady(() => {
       toggleBtn.textContent = previewExpanded ? "Show less" : "Show all";
     }
 
-    const logArg = (form.querySelector('[name="log_argument"]') || {}).value || '';
-    const outputArg = (form.querySelector('[name="output_argument"]') || {}).value || '';
-    const logPathTplVal = (form.querySelector('[name="log_path"]') || {}).value || '';
-    const outputPathTplVal = (form.querySelector('[name="output_path"]') || {}).value || '';
-    const dataPath = form.dataset.dataPath || '';
+    const logArg =
+      (form.querySelector('[name="log_argument"]') || {}).value || "";
+    const outputArg =
+      (form.querySelector('[name="output_argument"]') || {}).value || "";
+    const logPathTplVal =
+      (form.querySelector('[name="log_path"]') || {}).value || "";
+    const outputPathTplVal =
+      (form.querySelector('[name="output_path"]') || {}).value || "";
+    const dataPath = form.dataset.dataPath || "";
 
     const allLines = [];
     for (const combo of combos) {
@@ -186,20 +190,18 @@ onReady(() => {
         });
 
         const tokens = [base, ...combo, seedFlag, String(s)].filter(Boolean);
-        let cmd = substituteVars(tokens.join(' '), vars);
+        let cmd = substituteVars(tokens.join(" "), vars);
 
         if (logArg && logPathTplVal) {
-          const resolvedLog = substituteVars(logPathTplVal, vars);
-          const prefix = dataPath ? '{temporary_path}/' + dataPath + '/' : '';
-          cmd += ' ' + logArg + ' ' + prefix + resolvedLog;
+          cmd += " " + logArg + " <nfs_job_dir>/" + logPathTplVal;
         }
         if (outputArg && outputPathTplVal) {
           const resolvedOutput = substituteVars(outputPathTplVal, vars);
-          const prefix = dataPath ? '{temporary_path}/' + dataPath + '/' : '';
-          cmd += ' ' + outputArg + ' ' + prefix + resolvedOutput;
+          const prefix = dataPath ? "{temporary_path}/" + dataPath + "/" : "";
+          cmd += " " + outputArg + " " + prefix + resolvedOutput;
         }
 
-        allLines.push('<div class="truncate">' + esc(cmd) + '</div>');
+        allLines.push('<div class="truncate">' + esc(cmd) + "</div>");
       }
     }
 
@@ -296,14 +298,16 @@ onReady(() => {
     updatePreview();
   }
 
-  ["base_command", "seed_flag", "start_seed", "num_seeds"].forEach(id => {
+  ["base_command", "seed_flag", "start_seed", "num_seeds"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("input", updatePreview);
   });
-  ["log_argument", "output_argument", "log_path", "output_path"].forEach(name => {
-    const el = form.querySelector('[name="' + name + '"]');
-    if (el) el.addEventListener("input", updatePreview);
-  });
+  ["log_argument", "output_argument", "log_path", "output_path"].forEach(
+    (name) => {
+      const el = form.querySelector('[name="' + name + '"]');
+      if (el) el.addEventListener("input", updatePreview);
+    },
+  );
 
   form.addEventListener("submit", () => {
     document.getElementById("axes_json").value = JSON.stringify(getAxes());
