@@ -48,9 +48,9 @@
             scdoc < ssherd.1.scd | sed "s/1980-01-01/$(date '+%B %Y')/" > ssherd.1
           '';
           installPhase = ''
-            mkdir -p $out/dist/{usr/bin,usr/share/man/man1,etc/ssherd}
-            cp bin/ssherd $out/dist/usr/bin/
-            cp ssherd.1 $out/dist/usr/share/man/man1/
+            mkdir -p $out/bin $out/share/man/man1
+            cp bin/ssherd $out/bin/ssherd
+            cp ssherd.1   $out/share/man/man1/ssherd.1
           '';
         };
         buildImageWithNix = import ("${docker-nixpkgs}" + "/images/nix/default.nix");
@@ -89,7 +89,7 @@
               mkdir -p root
             '';
             config = {
-              Cmd = [ "${ssherd}/dist/usr/bin/ssherd" ];
+              Cmd = [ "/bin/ssherd" ];
               ExposedPorts = {
                 "1321/tcp" = { };
               };
