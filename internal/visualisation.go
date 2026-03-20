@@ -11,19 +11,21 @@ import (
 )
 
 type Visualization struct {
-	ID                 string    `json:"id"`
-	ProjectID          string    `json:"project_id"`
-	Name               string    `json:"name"`
-	Description        string    `json:"description"`
-	VizCommand         string    `json:"viz_command"`
-	DataPath           string    `json:"data_path"`
-	OutputFileTemplate string    `json:"output_file_template"`
-	BuildRemote        bool      `json:"build_remote"`
-	Axes               []VizAxis `json:"axes"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-
-	FormState json.RawMessage `json:"form_state,omitempty"`
+	ID                 string          `json:"id"`
+	ProjectID          string          `json:"project_id"`
+	Name               string          `json:"name"`
+	Description        string          `json:"description"`
+	VizCommand         string          `json:"viz_command"`
+	DataPath           string          `json:"data_path"`
+	OutputFileTemplate string          `json:"output_file_template"`
+	BuildRemote        bool            `json:"build_remote"`
+	Axes               []VizAxis       `json:"axes"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+	InputArgument      string          `json:"input_argument,omitempty"`
+	InputPath          string          `json:"input_path,omitempty"`
+	OutputArgument     string          `json:"output_argument,omitempty"`
+	FormState          json.RawMessage `json:"form_state,omitempty"`
 }
 
 type VizAxis struct {

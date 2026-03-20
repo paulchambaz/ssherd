@@ -450,8 +450,34 @@ onReady(() => {
       return;
     }
 
-    const hasSvg = cmdTpl.includes(".svg");
-    const hasPng = cmdTpl.includes(".png");
+    // Read the four routing fields.
+    const inputArg =
+      (form.querySelector('[name="input_argument"]') || {}).value || "";
+    const inputPath =
+      (form.querySelector('[name="input_path"]') || {}).value || "";
+    const outputArg =
+      (form.querySelector('[name="output_argument"]') || {}).value || "";
+    const outputFile =
+      (document.getElementById("viz_output_file") || {}).value || "";
+    const dataPath = form.dataset.dataPath || "";
+
+    // Build a suffix that will be appended to cmdTpl before resolveCmd runs,
+    // so {version} and {axis_name} inside inputPath/outputFile get substituted.
+    let suffix = "";
+    if (inputArg && inputPath) {
+      const resolvedInput = dataPath ? dataPath + "/" + inputPath : inputPath;
+      suffix += " " + inputArg + " " + resolvedInput;
+    }
+    if (outputArg && outputFile) {
+      const resolvedOutputTpl = dataPath
+        ? dataPath + "/" + outputFile
+        : outputFile;
+      suffix += " " + outputArg + " " + resolvedOutputTpl;
+    }
+
+    const fullCmdTpl = cmdTpl + suffix;
+    const hasSvg = fullCmdTpl.includes(".svg");
+    const hasPng = fullCmdTpl.includes(".png");
     const hasDual = hasSvg || hasPng;
 
     const comboCount =
@@ -473,7 +499,7 @@ onReady(() => {
     );
 
     const allLines = combos.map((combo, i) => {
-      const resolvedCmd = resolveCmd(cmdTpl, combo);
+      const resolvedCmd = resolveCmd(fullCmdTpl, combo);
       const axisArgs = combo.map(({ val }) => val).filter(Boolean);
       const fullCmd =
         axisArgs.length > 0
@@ -561,7 +587,7 @@ onReady(() => {
       <button type="button" class="remove-viz-axis text-xs text-red-400 hover:text-red-600 shrink-0 ml-auto">Remove</button>
     </div>
     <textarea id="viz_axis_${idx}_values" rows="3"
-      placeholder="--env sine\n--env cosine\n--env square"
+      placeholder="antmaze-large-play-v2\nantmaze-large-diverse-v2"
       class="w-full bg-transparent text-sm font-mono px-3 py-2.5 focus:outline-none resize-y placeholder:text-base-400"></textarea>
   `;
 
@@ -593,7 +619,16 @@ onReady(() => {
     .getElementById("viz_command_input")
     ?.addEventListener("input", updateVizPreview);
   document
-    .getElementById("viz_output_tpl")
+    .getElementById("viz_output_file")
+    ?.addEventListener("input", updateVizPreview);
+  form
+    .querySelector('[name="input_argument"]')
+    ?.addEventListener("input", updateVizPreview);
+  form
+    .querySelector('[name="input_path"]')
+    ?.addEventListener("input", updateVizPreview);
+  form
+    .querySelector('[name="output_argument"]')
     ?.addEventListener("input", updateVizPreview);
 
   form.addEventListener("submit", () => {
@@ -603,7 +638,7 @@ onReady(() => {
 
   window.addVizAxis = addVizAxis;
 
-  // ─── Redo : restauration du VizFormState ─────────────────────────────────
+  // ─── Redo: restore VizFormState ──────────────────────────────────────────
   const stateJSON = form.dataset.formState;
   if (stateJSON) {
     try {
@@ -616,8 +651,10 @@ onReady(() => {
 
       setVal('[name="name"]', state.name);
       setVal('[name="description"]', state.description);
-      setVal('[name="data_path"]', state.data_path);
-      setVal('[name="output_file_template"]', state.output_file_template);
+      setVal('[name="input_argument"]', state.input_argument);
+      setVal('[name="input_path"]', state.input_path);
+      setVal('[name="output_argument"]', state.output_argument);
+      setVal('[name="output_file"]', state.output_file);
 
       const vizCmd = document.getElementById("viz_command_input");
       if (vizCmd && state.viz_command != null) vizCmd.value = state.viz_command;

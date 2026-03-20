@@ -20,13 +20,15 @@ type vizFormAxisInput struct {
 }
 
 type VizFormState struct {
-	Name               string             `json:"name"`
-	Description        string             `json:"description"`
-	VizCommand         string             `json:"viz_command"`
-	DataPath           string             `json:"data_path"`
-	OutputFileTemplate string             `json:"output_file_template"`
-	BuildRemote        bool               `json:"build_remote"`
-	Axes               []vizFormAxisInput `json:"axes"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	VizCommand     string             `json:"viz_command"`
+	InputArgument  string             `json:"input_argument,omitempty"`
+	InputPath      string             `json:"input_path,omitempty"`
+	OutputArgument string             `json:"output_argument,omitempty"`
+	OutputFile     string             `json:"output_file,omitempty"`
+	BuildRemote    bool               `json:"build_remote"`
+	Axes           []vizFormAxisInput `json:"axes"`
 }
 
 func (s *Server) getNewVisualization(w http.ResponseWriter, r *http.Request) {
@@ -66,11 +68,23 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	description := strings.TrimSpace(r.FormValue("description"))
 	vizCommand := strings.TrimSpace(r.FormValue("viz_command"))
-	outputTemplate := strings.TrimSpace(r.FormValue("output_file_template"))
-	dataPathRaw := strings.TrimSpace(r.FormValue("data_path"))
-	if name == "" || vizCommand == "" || outputTemplate == "" {
-		http.Error(w, "Name, viz script and output template are required", http.StatusBadRequest)
+	inputArgument := strings.TrimSpace(r.FormValue("input_argument"))
+	inputPath := strings.TrimSpace(r.FormValue("input_path"))
+	outputArgument := strings.TrimSpace(r.FormValue("output_argument"))
+	outputFile := strings.TrimSpace(r.FormValue("output_file"))
+
+	if name == "" || vizCommand == "" || outputFile == "" {
+		http.Error(w, "Name, viz script and output file are required", http.StatusBadRequest)
 		return
+	}
+
+	// Prepend DataPath so all resolution code (VizLocalOutputPath, ResolveOutputPath)
+	// finds the file at the right place under localRepoDir.
+	var outputFileTemplate string
+	if p.DataPath != "" {
+		outputFileTemplate = filepath.Join(p.DataPath, outputFile)
+	} else {
+		outputFileTemplate = outputFile
 	}
 
 	type axisInputLocal struct {
@@ -111,13 +125,15 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 	buildRemote := r.FormValue("build_remote") == "on" || r.FormValue("build_remote") == "true"
 
 	formState := VizFormState{
-		Name:               name,
-		Description:        description,
-		VizCommand:         vizCommand,
-		DataPath:           dataPathRaw,
-		OutputFileTemplate: outputTemplate,
-		BuildRemote:        buildRemote,
-		Axes:               formAxes,
+		Name:           name,
+		Description:    description,
+		VizCommand:     vizCommand,
+		InputArgument:  inputArgument,
+		InputPath:      inputPath,
+		OutputArgument: outputArgument,
+		OutputFile:     outputFile,
+		BuildRemote:    buildRemote,
+		Axes:           formAxes,
 	}
 	formStateJSON, err := json.Marshal(formState)
 	if err != nil {
@@ -138,10 +154,12 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		Name:               name,
 		Description:        description,
 		VizCommand:         vizCommand,
-		DataPath:           absOrRelative(dataPathRaw, p.RemotePath),
-		OutputFileTemplate: outputTemplate,
+		OutputFileTemplate: outputFileTemplate,
 		BuildRemote:        buildRemote,
 		Axes:               axes,
+		InputArgument:      inputArgument,
+		InputPath:          inputPath,
+		OutputArgument:     outputArgument,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 		FormState:          json.RawMessage(formStateJSON),

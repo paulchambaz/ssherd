@@ -100,6 +100,7 @@
                 "NIX_CONFIG=experimental-features = nix-command flakes\nsandbox = false\ntrusted-users = root"
                 "HOME=/root"
                 "USER=root"
+                "NIX_REMOTE=daemon"
               ];
             };
           };

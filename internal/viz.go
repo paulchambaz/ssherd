@@ -76,10 +76,17 @@ func (s *Scheduler) vizTickProject(project *Project) {
 // Elle retourne immédiatement : chaque combo est une goroutine indépendante
 // qui émet EventVizDone à la fin (succès ou erreur).
 func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job, localRepoDir string) {
-	localDataPath := ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
+	var localDataPath string
+	if viz.InputPath != "" {
+		localDataPath = filepath.Join(localRepoDir, project.DataPath, viz.InputPath)
+	} else {
+		localDataPath = ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
+	}
 
 	for _, combo := range viz.AllCombos() {
-		outputPath := VizLocalOutputPath(localRepoDir, viz.OutputFileTemplate, combo.Key)
+		// Use buildVizCommand so {version} is substituted consistently with generation.
+		resolvedTpl := buildVizCommand(viz.OutputFileTemplate, combo, viz)
+		outputPath := filepath.Join(localRepoDir, resolvedTpl)
 
 		if !vizNeedsRegen(outputPath, localDataPath) {
 			continue
@@ -92,9 +99,7 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 		combo := combo
 		go func() {
 			defer s.clearVizGenerating(viz.ID, combo.Key)
-
 			err := s.generateVizLocal(project, viz, combo, localRepoDir)
-
 			vizErr := ""
 			if err != nil {
 				vizErr = err.Error()
@@ -172,6 +177,22 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 	}
 
 	prefix := s.getConfig().LocalPrefix
+
+	baseCmd := viz.VizCommand
+
+	// Append --input resolved to absolute local path. No variable substitution needed.
+	if viz.InputArgument != "" && viz.InputPath != "" {
+		resolvedInput := filepath.Join(localRepoDir, project.DataPath, viz.InputPath)
+		baseCmd += " " + viz.InputArgument + " " + resolvedInput
+	}
+
+	// Append --output with the full template path. {version} and axis vars will be
+	// substituted by buildVizCommand inside buildAndRun.
+	if viz.OutputArgument != "" && viz.OutputFileTemplate != "" {
+		resolvedOutputTpl := filepath.Join(localRepoDir, viz.OutputFileTemplate)
+		baseCmd += " " + viz.OutputArgument + " " + resolvedOutputTpl
+	}
+
 	buildAndRun := func(vizCmd string) error {
 		resolvedCmd := buildVizCommand(vizCmd, combo, viz)
 		var axisParts []string
@@ -196,12 +217,12 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 	}
 
 	var svgVizCmd, pngVizCmd string
-	if strings.Contains(viz.VizCommand, ".png") {
-		pngVizCmd = viz.VizCommand
-		svgVizCmd = strings.ReplaceAll(viz.VizCommand, ".png", ".svg")
+	if strings.Contains(baseCmd, ".png") {
+		pngVizCmd = baseCmd
+		svgVizCmd = strings.ReplaceAll(baseCmd, ".png", ".svg")
 	} else {
-		svgVizCmd = viz.VizCommand
-		pngVizCmd = strings.ReplaceAll(viz.VizCommand, ".svg", ".png")
+		svgVizCmd = baseCmd
+		pngVizCmd = strings.ReplaceAll(baseCmd, ".svg", ".png")
 	}
 
 	if err := buildAndRun(svgVizCmd); err != nil {

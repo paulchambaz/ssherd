@@ -1377,14 +1377,36 @@ func (s *Scheduler) syncOutputToLocal(watcher *Client, job *Job) {
 	}
 
 	remoteOutputDir := machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath
-	localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
 
-	log.Printf("scheduler: syncOutputToLocal: job=%s rsync %s → %s", job.ID, remoteOutputDir, localOutputDir)
-	if err := watcher.SyncDirToLocal(remoteOutputDir, localOutputDir); err != nil {
-		log.Printf("scheduler: syncOutputToLocal: sync failed: %v", err)
+	if len(job.OutputFiles) > 0 {
+		for _, relFile := range job.OutputFiles {
+			remotePath := machine.TemporaryPath + "/" + project.DataPath + "/" + relFile
+			localPath := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, relFile)
+
+			data, err := watcher.ReadRemoteFileBinary(remotePath)
+			if err != nil {
+				log.Printf("scheduler: syncOutputToLocal: job=%s read %s failed: %v", job.ID, remotePath, err)
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(localPath), 0755); err != nil {
+				log.Printf("scheduler: syncOutputToLocal: job=%s mkdir for %s failed: %v", job.ID, localPath, err)
+				continue
+			}
+			if err := os.WriteFile(localPath, data, 0644); err != nil {
+				log.Printf("scheduler: syncOutputToLocal: job=%s write %s failed: %v", job.ID, localPath, err)
+				continue
+			}
+			log.Printf("scheduler: syncOutputToLocal: job=%s copied %s → %s (%d bytes)", job.ID, remotePath, localPath, len(data))
+		}
+	} else {
+		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
+		log.Printf("scheduler: syncOutputToLocal: job=%s no watched files, rsync %s → %s", job.ID, remoteOutputDir, localOutputDir)
+		if err := watcher.SyncDirToLocal(remoteOutputDir, localOutputDir); err != nil {
+			log.Printf("scheduler: syncOutputToLocal: sync failed: %v", err)
+		}
 	}
 
-	if _, _, code, err := watcher.Run("rm -rf " + remoteOutputDir); err != nil || code != 0 {
+	if _, _, code, err := watcher.Run("rm -rf " + shellEscape(remoteOutputDir)); err != nil || code != 0 {
 		log.Printf("scheduler: syncOutputToLocal: rm -rf %s failed (code=%d): %v", remoteOutputDir, code, err)
 	} else {
 		log.Printf("scheduler: syncOutputToLocal: cleaned up remote %s", remoteOutputDir)
@@ -1396,12 +1418,6 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 
 	if err := watcher.FinalizeLogsToLocal(job.NfsJobDir, localJobDir); err != nil {
 		log.Printf("scheduler: finalize: logs copy failed for job %s: %v", job.ID, err)
-	}
-
-	if status == JobDone && len(job.OutputFiles) > 0 {
-		if err := watcher.DeleteOutputFiles(job.OutputFiles); err != nil {
-			log.Printf("scheduler: finalize: cleanup output files for job %s: %v", job.ID, err)
-		}
 	}
 
 	s.mu.Lock()
@@ -1458,6 +1474,12 @@ func (s *Scheduler) finalizeJobInline(watcher *Client, job *Job, localJobDir str
 	s.emit(EventJobStatus, job)
 
 	s.mu.Unlock()
+
+	// Clean up local cached progress file — no longer needed once job is terminal.
+	progressPath := filepath.Join(localJobDir, "progress.json")
+	if err := os.Remove(progressPath); err != nil && !os.IsNotExist(err) {
+		log.Printf("scheduler: finalize: remove progress.json for job %s: %v", job.ID, err)
+	}
 
 	if status == JobFailed {
 		go s.notify("ssherd — job failed", job.DisplayName+" failed")
