@@ -311,15 +311,15 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 				</div>
 				<!-- Figure caption / description -->
 				if viz.Description != "" {
-					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-6 pt-3 pb-1 border-t border-base-200">
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-8 py-3 border-t border-base-200">
 						<input type="hidden" name="name" value={ viz.Name }/>
-						<div class="flex items-baseline gap-2 group">
-							<span class="text-xs font-semibold text-base-500 shrink-0">Figure.</span>
+						<div class="flex items-center gap-3 group px-2">
+							<span class="text-sm font-bold text-base-700 shrink-0">Figure.</span>
 							<input
 								type="text"
 								name="description"
 								value={ viz.Description }
-								class="text-xs text-base-500 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors"
+								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors"
 							/>
 							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity">
 								Save
@@ -327,15 +327,15 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						</div>
 					</form>
 				} else {
-					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-6 pt-3 pb-1 border-t border-base-200">
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-8 py-3 border-t border-base-200">
 						<input type="hidden" name="name" value={ viz.Name }/>
-						<div class="flex items-baseline gap-2 group">
-							<span class="text-xs font-semibold text-base-500 shrink-0">Figure.</span>
+						<div class="flex items-center gap-3 group px-2">
+							<span class="text-sm font-bold text-base-700 shrink-0">Figure.</span>
 							<input
 								type="text"
 								name="description"
 								placeholder="Add a caption…"
-								class="text-xs text-base-400 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors placeholder:not-italic placeholder:text-base-300"
+								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors placeholder:not-italic placeholder:text-base-300"
 							/>
 							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity">
 								Save
@@ -343,7 +343,6 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						</div>
 					</form>
 				}
-
 				<div class="flex items-center justify-between px-4 py-2 border-t border-base-300 bg-base-50">
 					<button id="viz-copy-png" type="button" class="text-xs text-accent-500 hover:underline flex items-center gap-1.5 hidden">
 						<span class="icon-copy !size-3.5"></span>
