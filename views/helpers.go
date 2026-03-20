@@ -48,15 +48,12 @@ func formatFileSize(b int64) string {
 }
 
 func vizCommandTemplate(viz *internal.Visualization, p *internal.Project) string {
-    cmd := viz.VizCommand
-    if viz.InputArgument != "" && viz.InputPath != "" {
-        cmd += " " + viz.InputArgument + " " + viz.InputPath
-    }
-    if viz.OutputArgument != "" && viz.OutputFileTemplate != "" {
-        cmd += " " + viz.OutputArgument + " " + viz.OutputFileTemplate
-    }
-    for _, ax := range viz.Axes {
-        cmd += " {" + ax.Name + "}"
-    }
-    return cmd
+	cmd := viz.VizCommand
+	if viz.InputArgument != "" && viz.InputPath != "" {
+		cmd += " " + viz.InputArgument + " " + viz.InputPath
+	}
+	if viz.OutputArgument != "" && viz.OutputFileTemplate != "" {
+		cmd += " " + viz.OutputArgument + " " + viz.OutputFileTemplate
+	}
+	return cmd
 }
