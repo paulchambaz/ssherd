@@ -771,8 +771,8 @@ onReady(() => {
   function showSpinner() {
     img.classList.add("hidden");
     placeholder.classList.add("hidden");
-    errorEl.classList.add("hidden");
-    spinner.classList.remove("hidden");
+    if (errorEl) errorEl.classList.add("hidden");
+    if (spinner) spinner.classList.remove("hidden");
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
     if (copyBtn) copyBtn.classList.add("hidden");
@@ -780,8 +780,8 @@ onReady(() => {
 
   function showPlaceholder() {
     img.classList.add("hidden");
-    spinner.classList.add("hidden");
-    errorEl.classList.add("hidden");
+    if (spinner) spinner.classList.add("hidden");
+    if (errorEl) errorEl.classList.add("hidden");
     placeholder.classList.remove("hidden");
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
@@ -790,9 +790,9 @@ onReady(() => {
 
   function showError(msg) {
     img.classList.add("hidden");
-    spinner.classList.add("hidden");
+    if (spinner) spinner.classList.add("hidden");
     placeholder.classList.add("hidden");
-    errorEl.classList.remove("hidden");
+    if (errorEl) errorEl.classList.remove("hidden");
     if (errorMsg) errorMsg.textContent = msg;
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
@@ -800,9 +800,9 @@ onReady(() => {
   }
 
   function showImage(url) {
-    spinner.classList.add("hidden");
+    if (spinner) spinner.classList.add("hidden");
     placeholder.classList.add("hidden");
-    errorEl.classList.add("hidden");
+    if (errorEl) errorEl.classList.add("hidden");
 
     const svgUrl = url;
     const pngUrl = url + (url.includes("?") ? "&" : "?") + "format=png";

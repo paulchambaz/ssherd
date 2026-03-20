@@ -546,7 +546,7 @@ func (s *Scheduler) launchJob(job *Job, machine *Machine, project *Project, stor
 	// précédent), les copier vers le temporary de la nouvelle machine avant
 	// de lancer le script.
 	if machine.TemporaryPath != "" && project.DataPath != "" && job.OutputPath != "" {
-		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
+		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", job.OutputPath)
 		if info, err := os.Stat(localOutputDir); err == nil && info.IsDir() {
 			remoteOutputDir := machine.TemporaryPath + "/" + project.DataPath + "/" + job.OutputPath
 			log.Printf("scheduler: launchJob: copying local data to %s:%s", machine.Name, remoteOutputDir)
@@ -1223,7 +1223,7 @@ func (s *Scheduler) syncMachine(machine *Machine, proxy *Proxy, jobs []*Job) err
 		seen[key] = true
 
 		remoteDir := machine.TemporaryPath + "/" + project.DataPath + "/"
-		localDir := filepath.Join(s.cachePath, project.ID, "repo", project.DataPath)
+		localDir := filepath.Join(s.cachePath, project.ID, "repo")
 
 		log.Printf("scheduler: syncMachine: %s — rsync %s → %s", machine.Name, remoteDir, localDir)
 		if err := client.SyncDirToLocal(remoteDir, localDir); err != nil {
@@ -1381,7 +1381,7 @@ func (s *Scheduler) syncOutputToLocal(watcher *Client, job *Job) {
 	if len(job.OutputFiles) > 0 {
 		for _, relFile := range job.OutputFiles {
 			remotePath := machine.TemporaryPath + "/" + project.DataPath + "/" + relFile
-			localPath := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, relFile)
+			localPath := filepath.Join(s.cachePath, job.ProjectID, "repo", relFile)
 
 			data, err := watcher.ReadRemoteFileBinary(remotePath)
 			if err != nil {
@@ -1399,7 +1399,7 @@ func (s *Scheduler) syncOutputToLocal(watcher *Client, job *Job) {
 			log.Printf("scheduler: syncOutputToLocal: job=%s copied %s → %s (%d bytes)", job.ID, remotePath, localPath, len(data))
 		}
 	} else {
-		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", project.DataPath, job.OutputPath)
+		localOutputDir := filepath.Join(s.cachePath, job.ProjectID, "repo", job.OutputPath)
 		log.Printf("scheduler: syncOutputToLocal: job=%s no watched files, rsync %s → %s", job.ID, remoteOutputDir, localOutputDir)
 		if err := watcher.SyncDirToLocal(remoteOutputDir, localOutputDir); err != nil {
 			log.Printf("scheduler: syncOutputToLocal: sync failed: %v", err)

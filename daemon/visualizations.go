@@ -78,14 +78,7 @@ func (s *Server) postVisualization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepend DataPath so all resolution code (VizLocalOutputPath, ResolveOutputPath)
-	// finds the file at the right place under localRepoDir.
-	var outputFileTemplate string
-	if p.DataPath != "" {
-		outputFileTemplate = filepath.Join(p.DataPath, outputFile)
-	} else {
-		outputFileTemplate = outputFile
-	}
+	outputFileTemplate := outputFile
 
 	type axisInputLocal struct {
 		Name       string   `json:"name"`

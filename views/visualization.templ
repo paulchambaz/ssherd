@@ -244,7 +244,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						}
 					</div>
 				</div>
-				<p class="text-xs text-base-400 font-mono mt-2">{ viz.VizCommand }</p>
+        <p class="text-xs text-base-400 font-mono mt-2 break-all select-all cursor-text">{ vizCommandTemplate(viz, p) }</p>
 			</div>
 		</div>
 		<div class="max-w-5xl mx-auto w-full px-8 pb-12 space-y-6">

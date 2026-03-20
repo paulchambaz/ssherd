@@ -78,7 +78,7 @@ func (s *Scheduler) vizTickProject(project *Project) {
 func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job, localRepoDir string) {
 	var localDataPath string
 	if viz.InputPath != "" {
-		localDataPath = filepath.Join(localRepoDir, project.DataPath, viz.InputPath)
+		localDataPath = filepath.Join(localRepoDir, viz.InputPath)
 	} else {
 		localDataPath = ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
 	}
@@ -182,7 +182,7 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 
 	// Append --input resolved to absolute local path. No variable substitution needed.
 	if viz.InputArgument != "" && viz.InputPath != "" {
-		resolvedInput := filepath.Join(localRepoDir, project.DataPath, viz.InputPath)
+		resolvedInput := filepath.Join(localRepoDir, viz.InputPath)
 		baseCmd += " " + viz.InputArgument + " " + resolvedInput
 	}
 
