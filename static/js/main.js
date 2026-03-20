@@ -979,3 +979,8 @@ onReady(() => {
     if (e.key === "Escape") cancelEditRetry();
   });
 });
+
+function syncDescription(form) {
+    const div = form.querySelector('[contenteditable]');
+    form.querySelector('[name="description"]').value = div.innerText;
+}
