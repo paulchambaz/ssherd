@@ -203,7 +203,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 				</div>
 				<div class="flex items-start justify-between gap-6">
 					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="flex-1 min-w-0 space-y-1">
-            <input type="hidden" name="description" value={ viz.Description }/>
+						<input type="hidden" name="description" value={ viz.Description }/>
 						<div class="flex items-center gap-3">
 							<input
 								type="text"
@@ -238,7 +238,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						}
 					</div>
 				</div>
-        <p class="text-xs text-base-400 font-mono mt-2 break-all select-all cursor-text">{ vizCommandTemplate(viz, p) }</p>
+				<p class="text-xs text-base-400 font-mono mt-2 break-all select-all cursor-text">{ vizCommandTemplate(viz, p) }</p>
 			</div>
 		</div>
 		<div class="max-w-5xl mx-auto w-full px-8 pb-12 space-y-6">
@@ -309,6 +309,41 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						<pre id="viz-output-error-msg" class="text-xs font-mono border border-red-500 text-red-500 bg-red-500/10 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all"></pre>
 					</div>
 				</div>
+				<!-- Figure caption / description -->
+				if viz.Description != "" {
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-6 pt-3 pb-1 border-t border-base-200">
+						<input type="hidden" name="name" value={ viz.Name }/>
+						<div class="flex items-baseline gap-2 group">
+							<span class="text-xs font-semibold text-base-500 shrink-0">Figure.</span>
+							<input
+								type="text"
+								name="description"
+								value={ viz.Description }
+								class="text-xs text-base-500 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors"
+							/>
+							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity">
+								Save
+							</button>
+						</div>
+					</form>
+				} else {
+					<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="px-6 pt-3 pb-1 border-t border-base-200">
+						<input type="hidden" name="name" value={ viz.Name }/>
+						<div class="flex items-baseline gap-2 group">
+							<span class="text-xs font-semibold text-base-500 shrink-0">Figure.</span>
+							<input
+								type="text"
+								name="description"
+								placeholder="Add a caption…"
+								class="text-xs text-base-400 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors placeholder:not-italic placeholder:text-base-300"
+							/>
+							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity">
+								Save
+							</button>
+						</div>
+					</form>
+				}
+
 				<div class="flex items-center justify-between px-4 py-2 border-t border-base-300 bg-base-50">
 					<button id="viz-copy-png" type="button" class="text-xs text-accent-500 hover:underline flex items-center gap-1.5 hidden">
 						<span class="icon-copy !size-3.5"></span>
@@ -320,19 +355,6 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 					</div>
 				</div>
 			</div>
-      <form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID) } class="flex items-center gap-3">
-          <input type="hidden" name="name" value={ viz.Name }/>
-          <input
-              type="text"
-              name="description"
-              value={ viz.Description }
-              placeholder="Add a description…"
-              class="text-sm text-base-500 bg-transparent focus:outline-none focus:border-b focus:border-accent-400 flex-1 placeholder:text-base-300"
-          />
-          <button type="submit" class="shrink-0 px-3 py-1 text-xs font-medium border border-base-300 rounded hover:bg-base-100 text-base-500">
-              Save
-          </button>
-      </form>
 			<!-- Récepteur OOB WebSocket pour les événements de génération.
 			     Partagé par tous les combos de cette viz (data-combo-key change à chaque swap).
 			     Le JS lit data-timestamp pour détecter les mises à jour. -->
