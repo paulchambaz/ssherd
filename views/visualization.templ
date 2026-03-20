@@ -318,7 +318,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 							<textarea
 								name="description"
 								rows="2"
-								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors resize-none"
+								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors resize-none overflow-hidden"
 							>{ viz.Description }</textarea>
 							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity pt-0.5">
 								Save
@@ -334,7 +334,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 								name="description"
 								rows="2"
 								placeholder="Add a caption…"
-								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors resize-none placeholder:not-italic placeholder:text-base-300"
+								class="text-sm text-base-700 italic bg-transparent focus:outline-none w-full leading-relaxed border-b border-transparent focus:border-base-300 transition-colors resize-none placeholder:not-italic placeholder:text-base-300 overflow-hidden"
 							></textarea>
 							<button type="submit" class="shrink-0 text-xs text-base-400 hover:text-base-600 opacity-0 group-focus-within:opacity-100 transition-opacity pt-0.5">
 								Save
