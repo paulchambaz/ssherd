@@ -36,5 +36,5 @@ docker:
   @docker load < result
   @docker compose up
 
-paste:
+cat:
   @cat internal/*.go daemon/*.go views/*.templ views/helpers.go static/static.go static/css/main.css static/js/main.js
