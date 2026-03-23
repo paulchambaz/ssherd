@@ -9,7 +9,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/health", s.getHealth)
 	s.mux.HandleFunc("GET /ws", s.getWS)
 	s.mux.HandleFunc("GET /share/{viz_id}", s.getSharedVisualization)
-	s.mux.HandleFunc("GET /share/file/{filename}", s.getSharedFile)
+	s.mux.HandleFunc("GET /share/{viz_id}/img", s.getSharedVisualizationFile)
+	s.mux.HandleFunc("GET /dl/{filename}", s.getSharedFile)
 
 	s.mux.HandleFunc("GET /projects", s.getProjects)
 	s.mux.HandleFunc("GET /projects/new", s.getNewProject)

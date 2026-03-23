@@ -56,6 +56,80 @@ func (s *Server) getSharedVisualization(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// getSharedVisualizationFile serves visualization files for public share pages
+func (s *Server) getSharedVisualizationFile(w http.ResponseWriter, r *http.Request) {
+	vizID := r.PathValue("viz_id")
+	if vizID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Find the project and visualization
+	projects, err := internal.LoadProjects(s.cfg.CachePath)
+	if err != nil {
+		http.Error(w, "Failed to load projects", http.StatusInternalServerError)
+		log.Printf("Failed to load projects: %v", err)
+		return
+	}
+
+	var project *internal.Project
+	var viz *internal.Visualization
+
+	for _, p := range projects {
+		v, err := internal.LoadVisualization(s.cfg.CachePath, p.ID, vizID)
+		if err == nil {
+			project = p
+			viz = v
+			break
+		}
+	}
+
+	if project == nil || viz == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Parse axis selection from query params (same logic as getVisualizationFile)
+	selection := viz.DefaultSelection()
+	for i, ax := range viz.ToggleableAxes() {
+		paramName := ax.Name
+		if paramName == "" {
+			paramName = fmt.Sprintf("axis%d", i)
+		}
+
+		if val := r.URL.Query().Get(paramName); val != "" {
+			for _, v := range ax.Values {
+				if v == val {
+					selection[paramName] = val
+					break
+				}
+			}
+		}
+	}
+
+	localRepoDir := filepath.Join(s.cfg.CachePath, project.ID, "repo")
+	outputPath := viz.ResolveOutputPath(localRepoDir, selection)
+
+	if r.URL.Query().Get("format") == "png" {
+		outputPath = internal.VizLocalPNGPath(outputPath)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	ext := filepath.Ext(outputPath)
+	contentType := mime.TypeByExtension(ext)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=31536000") // Cache for 1 year like shared files
+	w.Write(data)
+}
+
 // getSharedFile serves a shared image by filename from ~/.cache/ssherd/share/
 func (s *Server) getSharedFile(w http.ResponseWriter, r *http.Request) {
 	filename := r.PathValue("filename")
@@ -207,7 +281,7 @@ func (s *Server) postShareVisualization(w http.ResponseWriter, r *http.Request) 
 
 	// Return the primary shareable URL (SVG preferred, PNG as fallback)
 	sharedFilename := uuid + primaryExt
-	shareURL := fmt.Sprintf("/share/file/%s", sharedFilename)
+	shareURL := fmt.Sprintf("/dl/%s", sharedFilename)
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"url": "%s", "filename": "%s"}`, shareURL, sharedFilename)
 }

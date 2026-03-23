@@ -34,7 +34,7 @@ templ ShareVisualizationPage(p *internal.Project, viz *internal.Visualization) {
 				data-viz-id={ viz.ID }
 				data-project-slug={ p.Slug }
 				data-axes={ vizToggleAxesJSON(viz) }
-				data-file-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/file" }
+				data-file-url={ "/share/" + viz.ID + "/img" }
 				data-share-mode="true"
 			>
 				<div id="viz-controls" class="px-4 py-3 border-b border-base-300 bg-base-50 space-y-2 hidden"></div>
