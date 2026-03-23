@@ -8,6 +8,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /{$}", s.getHome)
 	s.mux.HandleFunc("/health", s.getHealth)
 	s.mux.HandleFunc("GET /ws", s.getWS)
+	s.mux.HandleFunc("GET /share/{viz_id}", s.getSharedVisualization)
+	s.mux.HandleFunc("GET /share/file/{filename}", s.getSharedFile)
 
 	s.mux.HandleFunc("GET /projects", s.getProjects)
 	s.mux.HandleFunc("GET /projects/new", s.getNewProject)
@@ -37,6 +39,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}", s.postUpdateVisualization)
 	s.mux.HandleFunc("GET /projects/{slug}/visualizations/{id}/file", s.getVisualizationFile)
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}/generate", s.postGenerateVisualization)
+	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}/share", s.postShareVisualization)
 	s.mux.HandleFunc("POST /projects/{slug}/visualizations/{id}/delete", s.postDeleteVisualization)
 
 	s.mux.HandleFunc("GET /projects/{slug}/files", s.getProjectFiles)

@@ -223,6 +223,13 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 								Generate
 							</button>
 						</form>
+						<a
+							href={ templ.SafeURL("/share/" + viz.ID) }
+							target="_blank"
+							class="px-3 py-1.5 text-sm font-medium border border-base-300 rounded-md hover:bg-base-100"
+						>
+							Share
+						</a>
 						<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/visualizations/" + viz.ID + "/delete") } onsubmit="return confirm('Delete this visualization?')">
 							<button type="submit" class="px-3 py-1.5 text-sm font-medium text-red-500 border border-red-500 rounded-md hover:bg-red-500/20">
 								Delete
@@ -279,6 +286,7 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 				class="border border-base-300 rounded-md overflow-hidden"
 				id="viz-viewer"
 				data-viz-id={ viz.ID }
+				data-project-slug={ p.Slug }
 				data-axes={ vizToggleAxesJSON(viz) }
 				data-file-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/file" }
 				data-jobs-writing={ func() string { if jobsWriting { return "true" }; return "false" }() }
@@ -346,8 +354,8 @@ templ VisualizationDetailPage(p *internal.Project, viz *internal.Visualization, 
 						Copy PNG
 					</button>
 					<div class="flex items-center gap-3">
-						<a id="viz-download-svg" href="#" download class="text-xs text-accent-500 hover:underline hidden">Download SVG</a>
-						<a id="viz-download-png" href="#" download class="text-xs text-accent-500 hover:underline hidden">Download PNG</a>
+						<button id="viz-download-svg" type="button" class="text-xs text-accent-500 hover:underline hidden">Download SVG</button>
+						<button id="viz-download-png" type="button" class="text-xs text-accent-500 hover:underline hidden">Download PNG</button>
 					</div>
 				</div>
 			</div>

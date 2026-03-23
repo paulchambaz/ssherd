@@ -677,6 +677,7 @@ onReady(() => {
   if (!viewer) return;
 
   const vizId = viewer.dataset.vizId;
+  const projectSlug = viewer.dataset.projectSlug;
   const axes = JSON.parse(viewer.dataset.axes || "[]");
   const fileBaseUrl = viewer.dataset.fileUrl;
 
@@ -689,6 +690,9 @@ onReady(() => {
   const downloadSvg = document.getElementById("viz-download-svg");
   const downloadPng = document.getElementById("viz-download-png");
   const copyBtn = document.getElementById("viz-copy-png");
+
+  // Cache shared URLs to avoid recreating them
+  let cachedShareUrl = null;
 
   // Combos dont le fichier est connu disponible (peuplé par les fragments WS).
   const availableCombos = new Set();
@@ -785,6 +789,7 @@ onReady(() => {
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
     if (copyBtn) copyBtn.classList.add("hidden");
+    cachedShareUrl = null;
   }
 
   function showPlaceholder() {
@@ -795,6 +800,7 @@ onReady(() => {
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
     if (copyBtn) copyBtn.classList.add("hidden");
+    cachedShareUrl = null;
   }
 
   function showError(msg) {
@@ -806,6 +812,35 @@ onReady(() => {
     if (downloadSvg) downloadSvg.classList.add("hidden");
     if (downloadPng) downloadPng.classList.add("hidden");
     if (copyBtn) copyBtn.classList.add("hidden");
+    cachedShareUrl = null;
+  }
+
+  async function getOrCreateSharedUrl() {
+    if (cachedShareUrl) return cachedShareUrl;
+
+    // Build form data with current axis selection
+    const formData = new URLSearchParams();
+    axes.forEach((ax, idx) => {
+      const paramName = ax.name || `axis${idx}`;
+      if (selection[idx] !== undefined) {
+        formData.append(paramName, selection[idx]);
+      }
+    });
+
+    const resp = await fetch(
+      `/projects/${projectSlug}/visualizations/${vizId}/share`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString(),
+      }
+    );
+
+    if (!resp.ok) throw new Error("Share failed");
+
+    const data = await resp.json();
+    cachedShareUrl = data.url;
+    return cachedShareUrl;
   }
 
   function showImage(url) {
@@ -820,14 +855,66 @@ onReady(() => {
     img.onload = () => img.classList.remove("hidden");
     img.onerror = () => showError("Failed to load output file.");
 
+    // Download SVG button
     if (downloadSvg) {
-      downloadSvg.href = svgUrl;
       downloadSvg.classList.remove("hidden");
+      downloadSvg.onclick = async () => {
+        const prev = downloadSvg.textContent;
+        try {
+          downloadSvg.textContent = "Preparing...";
+          const shareUrl = await getOrCreateSharedUrl();
+
+          // Trigger download from shared URL
+          const a = document.createElement("a");
+          a.href = shareUrl;
+          a.download = "";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          downloadSvg.textContent = prev;
+        } catch (err) {
+          console.error("Download failed:", err);
+          downloadSvg.textContent = "Failed";
+          setTimeout(() => {
+            downloadSvg.textContent = prev;
+          }, 2000);
+        }
+      };
     }
+
+    // Download PNG button
     if (downloadPng) {
-      downloadPng.href = pngUrl;
       downloadPng.classList.remove("hidden");
+      downloadPng.onclick = async () => {
+        const prev = downloadPng.textContent;
+        try {
+          downloadPng.textContent = "Preparing...";
+          const shareUrl = await getOrCreateSharedUrl();
+
+          // Get PNG version (replace .svg with .png)
+          const pngShareUrl = shareUrl.replace(/\.svg$/, ".png");
+
+          // Trigger download from shared URL
+          const a = document.createElement("a");
+          a.href = pngShareUrl;
+          a.download = "";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          downloadPng.textContent = prev;
+        } catch (err) {
+          console.error("Download failed:", err);
+          downloadPng.textContent = "Failed";
+          setTimeout(() => {
+            downloadPng.textContent = prev;
+          }, 2000);
+        }
+      };
     }
+
+    // Copy PNG button (unchanged)
     if (copyBtn) {
       copyBtn.classList.remove("hidden");
       copyBtn.onclick = async () => {

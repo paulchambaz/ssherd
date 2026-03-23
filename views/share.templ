@@ -1,0 +1,78 @@
+package views
+
+import (
+	"github.com/paulchambaz/ssherd/internal"
+)
+
+templ ShareVisualizationPage(p *internal.Project, viz *internal.Visualization) {
+	@Base() {
+		<!-- Simple header -->
+		<header class="border-b border-base-200 bg-base-50">
+			<div class="max-w-5xl mx-auto px-8 py-4 flex items-center justify-between">
+				<h1 class="text-lg font-bold">ssherd</h1>
+				<button
+					onclick="toggleTheme()"
+					class="p-2 rounded-md hover:bg-base-200 transition-colors"
+					aria-label="Toggle theme"
+				>
+					<svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+					</svg>
+				</button>
+			</div>
+		</header>
+		<!-- Content -->
+		<div class="max-w-5xl mx-auto w-full px-8 mt-8 pb-12">
+			<!-- Title -->
+			<div class="mb-6">
+				<h2 class="text-2xl font-bold">{ viz.Name }</h2>
+			</div>
+			<!-- Viewer -->
+			<div
+				class="border border-base-300 rounded-md overflow-hidden"
+				id="viz-viewer"
+				data-viz-id={ viz.ID }
+				data-project-slug={ p.Slug }
+				data-axes={ vizToggleAxesJSON(viz) }
+				data-file-url={ "/projects/" + p.Slug + "/visualizations/" + viz.ID + "/file" }
+				data-share-mode="true"
+			>
+				<div id="viz-controls" class="px-4 py-3 border-b border-base-300 bg-base-50 space-y-2 hidden"></div>
+				<div class="px-4 py-6 flex flex-col items-center justify-center min-h-[300px] bg-base-50" id="viz-output-container">
+					<img id="viz-output-img" src="" alt="Visualization" class="max-w-full hidden"/>
+					<div id="viz-output-placeholder" class="text-center text-base-400 text-sm space-y-2">
+						<p>No output generated yet.</p>
+					</div>
+					<div id="viz-output-spinner" class="flex flex-col items-center gap-4 text-base-400 hidden">
+						<div class="w-8 h-8 border-2 border-base-300 border-t-accent-500 rounded-full animate-spin"></div>
+						<span class="text-sm">Loading…</span>
+					</div>
+					<div id="viz-output-error" class="w-full hidden">
+						<div class="text-xs font-semibold text-red-500 mb-2">Failed to load</div>
+						<pre id="viz-output-error-msg" class="text-xs font-mono border border-red-500 text-red-500 bg-red-500/10 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all"></pre>
+					</div>
+				</div>
+				<!-- Figure caption / description (non-editable) -->
+				if viz.Description != "" {
+					<div class="px-8 py-4 border-t border-base-200">
+						<div class="flex items-start justify-center">
+							<div class="text-base text-base-700 italic leading-relaxed text-center max-w-2xl before:content-['Figure.'] before:font-bold before:not-italic before:mr-1.5">
+								{ viz.Description }
+							</div>
+						</div>
+					</div>
+				}
+				<div class="flex items-center justify-between px-4 py-2 border-t border-base-300 bg-base-50">
+					<button id="viz-copy-png" type="button" class="text-xs text-accent-500 hover:underline flex items-center gap-1.5 hidden">
+						<span class="icon-copy !size-3.5"></span>
+						Copy PNG
+					</button>
+					<div class="flex items-center gap-3">
+						<button id="viz-download-svg" type="button" class="text-xs text-accent-500 hover:underline hidden">Download SVG</button>
+						<button id="viz-download-png" type="button" class="text-xs text-accent-500 hover:underline hidden">Download PNG</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	}
+}
