@@ -73,8 +73,8 @@ func (s *Scheduler) vizTickProject(project *Project) {
 }
 
 // vizTickOne lance en arrière-plan la régénération de chaque combo périmé.
-// Elle retourne immédiatement : chaque combo est une goroutine indépendante
-// qui émet EventVizDone à la fin (succès ou erreur).
+// Elle retourne immédiatement : tous les combos sont traités dans UNE seule
+// goroutine qui effectue un git pull unique et génère les combos séquentiellement.
 func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job, localRepoDir string) {
 	var localDataPath string
 	if viz.InputPath != "" {
@@ -83,8 +83,10 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 		localDataPath = ResolveToLocal(viz.DataPath, project.RemotePath, localRepoDir)
 	}
 
+	// Collect combos that need regeneration
+	var combosToGenerate []VizCombo
 	for _, combo := range viz.AllCombos() {
-		// Use buildVizCommand so {version} is substituted consistently with generation.
+		// Check if output file is stale
 		resolvedTpl := buildVizCommand(viz.OutputFileTemplate, combo, viz)
 		outputPath := filepath.Join(localRepoDir, resolvedTpl)
 
@@ -92,28 +94,27 @@ func (s *Scheduler) vizTickOne(project *Project, viz *Visualization, jobs []*Job
 			continue
 		}
 
+		// Try to mark this combo as generating
 		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
 			continue
 		}
 
-		combo := combo
-		go func() {
-			defer s.clearVizGenerating(viz.ID, combo.Key)
-			err := s.generateVizLocal(project, viz, combo, localRepoDir)
-			vizErr := ""
-			if err != nil {
-				vizErr = err.Error()
-				log.Printf("viz: tick %s/%s combo %s: %v", project.Slug, viz.Name, combo.Key, err)
-			}
-			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, vizErr)
-		}()
+		combosToGenerate = append(combosToGenerate, combo)
 	}
+
+	// If no combos need generation, return early
+	if len(combosToGenerate) == 0 {
+		return
+	}
+
+	// Launch sequential batch processing in ONE goroutine
+	s.generateAllCombosSequential(project, viz, combosToGenerate, localRepoDir)
 }
 
 // GenerateVizNow est appelé par le handler HTTP pour une régénération manuelle.
-// Elle lance chaque combo dans une goroutine, émet immédiatement un événement
-// "generating" pour chacun, puis un EventVizDone à la fin. Elle retourne sans
-// attendre la fin des générations.
+// Elle lance UNE goroutine qui génère tous les combos séquentiellement, effectue
+// un seul git pull au début, et émet un EventVizDone pour chaque combo.
+// Elle retourne immédiatement sans attendre la fin des générations.
 func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode string) {
 	localRepoDir := filepath.Join(s.cachePath, project.ID, "repo")
 
@@ -133,29 +134,29 @@ func (s *Scheduler) GenerateVizNow(project *Project, viz *Visualization, mode st
 		}
 	}
 
+	// Collect combos that need generation
+	var combosToGenerate []VizCombo
 	for _, combo := range viz.AllCombos() {
-		combo := combo
-
+		// Try to mark this combo as generating
 		if !s.tryMarkVizGenerating(viz.ID, combo.Key) {
+			// Already generating - emit "generating" status and skip
 			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
 			continue
 		}
 
+		// Successfully marked - emit immediate "generating" status
 		s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, "generating")
-
-		go func() {
-			defer s.clearVizGenerating(viz.ID, combo.Key)
-
-			err := s.generateVizLocal(project, viz, combo, localRepoDir)
-
-			vizErr := ""
-			if err != nil {
-				vizErr = err.Error()
-				log.Printf("viz: GenerateVizNow %s combo %s: %v", viz.Name, combo.Key, err)
-			}
-			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, vizErr)
-		}()
+		combosToGenerate = append(combosToGenerate, combo)
 	}
+
+	// If no combos need generation, return early
+	if len(combosToGenerate) == 0 {
+		log.Printf("viz: GenerateVizNow %s: all combos already generating", viz.Name)
+		return
+	}
+
+	// Launch sequential batch processing in ONE goroutine
+	s.generateAllCombosSequential(project, viz, combosToGenerate, localRepoDir)
 }
 
 // VizJobsWriting indique si des jobs running écrivent sur les données de cette viz.
@@ -172,22 +173,32 @@ func (s *Scheduler) VizJobsWriting(project *Project, viz *Visualization) bool {
 }
 
 func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo VizCombo, localRepoDir string) error {
+	// Git pull for backward compatibility if called directly
 	if err := localGitCloneOrPull(project, localRepoDir); err != nil {
 		return fmt.Errorf("git pull before local viz: %w", err)
 	}
+	return s.executeVizCommand(project, viz, combo, localRepoDir)
+}
 
+// executeVizCommand builds and runs the visualization command for a single combo.
+// It does NOT perform git pull - that should be done once before calling this.
+func (s *Scheduler) executeVizCommand(
+	project *Project,
+	viz *Visualization,
+	combo VizCombo,
+	localRepoDir string,
+) error {
 	prefix := s.getConfig().LocalPrefix
 
 	baseCmd := viz.VizCommand
 
-	// Append --input resolved to absolute local path. No variable substitution needed.
+	// Append --input resolved to absolute local path
 	if viz.InputArgument != "" && viz.InputPath != "" {
 		resolvedInput := filepath.Join(localRepoDir, viz.InputPath)
 		baseCmd += " " + viz.InputArgument + " " + resolvedInput
 	}
 
-	// Append --output with the full template path. {version} and axis vars will be
-	// substituted by buildVizCommand inside buildAndRun.
+	// Append --output with the full template path
 	if viz.OutputArgument != "" && viz.OutputFileTemplate != "" {
 		resolvedOutputTpl := filepath.Join(localRepoDir, viz.OutputFileTemplate)
 		baseCmd += " " + viz.OutputArgument + " " + resolvedOutputTpl
@@ -216,6 +227,7 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 		return nil
 	}
 
+	// Generate both SVG and PNG
 	var svgVizCmd, pngVizCmd string
 	if strings.Contains(baseCmd, ".png") {
 		pngVizCmd = baseCmd
@@ -235,6 +247,51 @@ func (s *Scheduler) generateVizLocal(project *Project, viz *Visualization, combo
 
 	log.Printf("viz: generated local %s combo %s", viz.Name, combo.Key)
 	return nil
+}
+
+// generateAllCombosSequential spawns ONE goroutine that processes all combos
+// sequentially. It performs git pull ONCE at the start, then executes each
+// combo in order, emitting WebSocket events as each combo completes.
+func (s *Scheduler) generateAllCombosSequential(
+	project *Project,
+	viz *Visualization,
+	combos []VizCombo,
+	localRepoDir string,
+) {
+	go func() {
+		// Step 1: Perform git pull ONCE at the start
+		log.Printf("viz: batch generation for %s: pulling git repo once for %d combos", viz.Name, len(combos))
+		if err := localGitCloneOrPull(project, localRepoDir); err != nil {
+			errMsg := fmt.Sprintf("git pull failed: %v", err)
+			log.Printf("viz: batch generation for %s: %s", viz.Name, errMsg)
+
+			// Fail all combos with the same git error
+			for _, combo := range combos {
+				s.clearVizGenerating(viz.ID, combo.Key)
+				s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, errMsg)
+			}
+			return
+		}
+
+		// Step 2: Process each combo SEQUENTIALLY
+		log.Printf("viz: batch generation for %s: processing %d combos sequentially", viz.Name, len(combos))
+		for _, combo := range combos {
+			// Execute the visualization command (no git pull inside)
+			err := s.executeVizCommand(project, viz, combo, localRepoDir)
+
+			vizErr := ""
+			if err != nil {
+				vizErr = err.Error()
+				log.Printf("viz: batch combo %s: %v", combo.Key, err)
+			}
+
+			// Clear the generation guard and emit event for this combo
+			s.clearVizGenerating(viz.ID, combo.Key)
+			s.emitViz(viz.ID, project.ID, project.Slug, combo.Key, vizErr)
+		}
+
+		log.Printf("viz: batch generation for %s: completed all %d combos", viz.Name, len(combos))
+	}()
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

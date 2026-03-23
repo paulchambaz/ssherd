@@ -694,9 +694,10 @@ onReady(() => {
   const availableCombos = new Set();
 
   // Sélection courante : première valeur de chaque axe par défaut.
+  // Use axis INDEX as key (not name) to avoid collisions when names are empty.
   const selection = {};
-  axes.forEach((ax) => {
-    if (ax.values && ax.values.length > 0) selection[ax.name] = ax.values[0];
+  axes.forEach((ax, idx) => {
+    if (ax.values && ax.values.length > 0) selection[idx] = ax.values[0];
   });
 
   // ── Calcul du comboKey JS (doit correspondre à la logique Go) ────────────
@@ -704,9 +705,10 @@ onReady(() => {
   function currentComboKey() {
     if (axes.length === 0) return "default";
     return axes
-      .map((ax) => {
-        const idx = ax.values.indexOf(selection[ax.name]);
-        return String(idx >= 0 ? idx : 0);
+      .map((ax, idx) => {
+        const selectedValue = selection[idx];
+        const valueIdx = ax.values.indexOf(selectedValue);
+        return String(valueIdx >= 0 ? valueIdx : 0);
       })
       .join("-");
   }
@@ -714,7 +716,7 @@ onReady(() => {
   // ── Construction des contrôles d'axes ────────────────────────────────────
   if (axes.length > 0) {
     controls.classList.remove("hidden");
-    axes.forEach((ax) => {
+    axes.forEach((ax, axisIdx) => {
       const row = document.createElement("div");
       row.className = "flex items-center justify-center gap-2 flex-wrap";
 
@@ -729,11 +731,11 @@ onReady(() => {
       ax.values.forEach((val) => {
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.dataset.axis = ax.name;
+        btn.dataset.axisIndex = axisIdx;  // Use index instead of name
         btn.dataset.value = val;
         btn.textContent = val;
         btn.addEventListener("click", () => {
-          selection[ax.name] = val;
+          selection[axisIdx] = val;  // Use index as key
           updateButtons();
           loadOutput();
         });
@@ -751,8 +753,9 @@ onReady(() => {
   }
 
   function updateButtons() {
-    controls.querySelectorAll("button[data-axis]").forEach((btn) => {
-      const active = selection[btn.dataset.axis] === btn.dataset.value;
+    controls.querySelectorAll("button[data-axis-index]").forEach((btn) => {
+      const axisIdx = btn.dataset.axisIndex;
+      const active = selection[axisIdx] === btn.dataset.value;
       btn.className = active
         ? "text-xs px-2.5 py-1 rounded border bg-accent-500 text-white border-accent-600 transition-colors"
         : "text-xs px-2.5 py-1 rounded border bg-base-50 text-base-600 border-base-300 hover:bg-base-100 transition-colors";
@@ -761,7 +764,12 @@ onReady(() => {
 
   function buildUrl() {
     const params = new URLSearchParams();
-    Object.entries(selection).forEach(([k, v]) => params.set(k, v));
+    // Build query params using axis names (for server compatibility)
+    axes.forEach((ax, idx) => {
+      if (ax.name && selection[idx] !== undefined) {
+        params.set(ax.name, selection[idx]);
+      }
+    });
     const qs = params.toString();
     return fileBaseUrl + (qs ? "?" + qs : "");
   }
