@@ -764,10 +764,11 @@ onReady(() => {
 
   function buildUrl() {
     const params = new URLSearchParams();
-    // Build query params using axis names (for server compatibility)
+    // Build query params: use axis name if it exists, otherwise use "axis{idx}"
     axes.forEach((ax, idx) => {
-      if (ax.name && selection[idx] !== undefined) {
-        params.set(ax.name, selection[idx]);
+      if (selection[idx] !== undefined) {
+        const paramName = ax.name || `axis${idx}`;
+        params.set(paramName, selection[idx]);
       }
     });
     const qs = params.toString();

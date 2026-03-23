@@ -57,9 +57,14 @@ func (v *Visualization) SVGCount() int {
 
 func (v *Visualization) DefaultSelection() map[string]string {
 	sel := map[string]string{}
-	for _, ax := range v.Axes {
+	for i, ax := range v.Axes {
 		if len(ax.Values) > 0 {
-			sel[ax.Name] = ax.Values[0]
+			// Use axis name if it exists, otherwise use "axis{i}" for unnamed axes
+			name := ax.Name
+			if name == "" {
+				name = fmt.Sprintf("axis%d", i)
+			}
+			sel[name] = ax.Values[0]
 		}
 	}
 	return sel
@@ -72,7 +77,12 @@ func (v *Visualization) ComboKey(selection map[string]string) string {
 	}
 	parts := make([]string, len(axes))
 	for i, ax := range axes {
-		val := selection[ax.Name]
+		// Use axis name if it exists, otherwise use "axis{i}" for unnamed axes
+		name := ax.Name
+		if name == "" {
+			name = fmt.Sprintf("axis%d", i)
+		}
+		val := selection[name]
 		idx := 0
 		for j, v := range ax.Values {
 			if v == val {
@@ -242,7 +252,12 @@ func (v *Visualization) ResolveOutputPath(localRepoDir string, selection map[str
 		comboSel := map[string]string{}
 		for i, ax := range v.Axes {
 			if i < len(combo.Args) {
-				comboSel[ax.Name] = combo.Args[i]
+				// Use axis name if it exists, otherwise use "axis{i}" for unnamed axes
+				name := ax.Name
+				if name == "" {
+					name = fmt.Sprintf("axis%d", i)
+				}
+				comboSel[name] = combo.Args[i]
 			}
 		}
 		match := true

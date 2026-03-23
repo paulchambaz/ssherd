@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"mime"
 	"net/http"
@@ -198,11 +199,18 @@ func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	selection := viz.DefaultSelection()
-	for _, ax := range viz.ToggleableAxes() {
-		if val := r.URL.Query().Get(ax.Name); val != "" {
+	for i, ax := range viz.ToggleableAxes() {
+		// Try axis name first, fallback to "axis{i}" for unnamed axes
+		paramName := ax.Name
+		if paramName == "" {
+			paramName = fmt.Sprintf("axis%d", i)
+		}
+
+		if val := r.URL.Query().Get(paramName); val != "" {
 			for _, v := range ax.Values {
 				if v == val {
-					selection[ax.Name] = val
+					// Store using the same key (paramName) for consistency
+					selection[paramName] = val
 					break
 				}
 			}
