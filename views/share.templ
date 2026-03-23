@@ -6,20 +6,16 @@ import (
 
 templ ShareVisualizationPage(p *internal.Project, viz *internal.Visualization) {
 	@BasePublic() {
-		<!-- Simple header -->
-		<header class="border-b border-base-200 bg-base-50">
-			<div class="max-w-5xl mx-auto px-8 py-4 flex items-center justify-between">
-				<h1 class="text-lg font-bold">ssherd</h1>
-				<button
-					onclick="toggleTheme()"
-					class="p-2 rounded-md hover:bg-base-200 transition-colors"
-					aria-label="Toggle theme"
-				>
-					<svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
-					</svg>
-				</button>
+		<!-- Header -->
+		<header class="flex justify-between items-center max-w-[100rem] mx-auto w-full px-8 py-4">
+			<div class="">
+				<span class="font-bold">
+					<span class="text-lg">SS</span><span class="text-2xl">HERD</span>
+				</span>
 			</div>
+			<nav class="whitespace-nowrap flex h-full items-center gap-4 [&>*]:h-full [&>*]:text-sm [&>*]:select-none [&>*]:flex [&>*]:justify-center [&>*]:items-center [&>*:hover]:text-accent-400">
+				<button onclick="toggleTheme()"><span class="icon-theme !size-5"></span></button>
+			</nav>
 		</header>
 		<!-- Content -->
 		<div class="max-w-5xl mx-auto w-full px-8 mt-8 pb-12">
