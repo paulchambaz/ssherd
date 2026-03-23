@@ -20,3 +20,23 @@ templ Base() {
 		<script src="/static/js/main.js"></script>
 	</html>
 }
+
+templ BasePublic() {
+	<!DOCTYPE html>
+	<html lang="fr">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>ssherd</title>
+			<link href="/static/css/styles.css" rel="stylesheet"/>
+			<script src="/static/js/htmx.min.js"></script>
+			<meta name="robots" content="noindex, nofollow"/>
+		</head>
+		<body class="bg-base-100">
+			<div class="text-base-900 flex flex-col min-h-screen">
+				{ children... }
+			</div>
+		</body>
+		<script src="/static/js/main.js"></script>
+	</html>
+}
