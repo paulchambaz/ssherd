@@ -227,14 +227,21 @@ func (s *Scheduler) executeVizCommand(
 		return nil
 	}
 
-	// Generate both SVG and PNG
-	var svgVizCmd, pngVizCmd string
-	if strings.Contains(baseCmd, ".png") {
+	// Generate SVG, PNG and TXT
+	var svgVizCmd, pngVizCmd, txtVizCmd string
+	switch {
+	case strings.Contains(baseCmd, ".png"):
 		pngVizCmd = baseCmd
 		svgVizCmd = strings.ReplaceAll(baseCmd, ".png", ".svg")
-	} else {
+		txtVizCmd = strings.ReplaceAll(baseCmd, ".png", ".txt")
+	case strings.Contains(baseCmd, ".txt"):
+		txtVizCmd = baseCmd
+		svgVizCmd = strings.ReplaceAll(baseCmd, ".txt", ".svg")
+		pngVizCmd = strings.ReplaceAll(baseCmd, ".txt", ".png")
+	default:
 		svgVizCmd = baseCmd
 		pngVizCmd = strings.ReplaceAll(baseCmd, ".svg", ".png")
+		txtVizCmd = strings.ReplaceAll(baseCmd, ".svg", ".txt")
 	}
 
 	if err := buildAndRun(svgVizCmd); err != nil {
@@ -243,6 +250,10 @@ func (s *Scheduler) executeVizCommand(
 	if err := buildAndRun(pngVizCmd); err != nil {
 		log.Printf("viz: PNG generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
 		return fmt.Errorf("SVG ok, PNG failed: %w", err)
+	}
+	if err := buildAndRun(txtVizCmd); err != nil {
+		log.Printf("viz: TXT generation failed for %s combo %s: %v", viz.Name, combo.Key, err)
+		return fmt.Errorf("SVG ok, PNG ok, TXT failed: %w", err)
 	}
 
 	log.Printf("viz: generated local %s combo %s", viz.Name, combo.Key)

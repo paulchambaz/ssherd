@@ -220,8 +220,11 @@ func (s *Server) getVisualizationFile(w http.ResponseWriter, r *http.Request) {
 	localRepoDir := filepath.Join(s.cfg.CachePath, p.ID, "repo")
 	outputPath := viz.ResolveOutputPath(localRepoDir, selection)
 
-	if r.URL.Query().Get("format") == "png" {
+	switch r.URL.Query().Get("format") {
+	case "png":
 		outputPath = internal.VizLocalPNGPath(outputPath)
+	case "txt":
+		outputPath = internal.VizLocalTXTPath(outputPath)
 	}
 
 	data, err := os.ReadFile(outputPath)

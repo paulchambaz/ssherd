@@ -288,3 +288,11 @@ func VizLocalPNGPath(svgPath string) string {
 	}
 	return svgPath[:len(svgPath)-len(ext)] + ".png"
 }
+
+func VizLocalTXTPath(svgPath string) string {
+	ext := filepath.Ext(svgPath)
+	if ext == "" {
+		return svgPath + ".txt"
+	}
+	return svgPath[:len(svgPath)-len(ext)] + ".txt"
+}
