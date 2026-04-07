@@ -478,17 +478,18 @@ onReady(() => {
     const fullCmdTpl = cmdTpl + suffix;
     const hasSvg = fullCmdTpl.includes(".svg");
     const hasPng = fullCmdTpl.includes(".png");
-    const hasDual = hasSvg || hasPng;
+    const hasTxt = fullCmdTpl.includes(".txt");
+    const hasMulti = hasSvg || hasPng || hasTxt;
 
     const comboCount =
       toggleable.reduce((acc, ax) => acc * (ax.values.length || 1), 1) || 1;
-    const totalCount = hasDual ? comboCount * 2 : comboCount;
+    const totalCount = hasMulti ? comboCount * 3 : comboCount;
 
     if (countEl)
       countEl.textContent =
         totalCount + " output" + (totalCount !== 1 ? "s" : "");
 
-    const lineCount = hasDual ? comboCount * 2 : comboCount;
+    const lineCount = hasMulti ? comboCount * 3 : comboCount;
     if (toggleBtn) {
       toggleBtn.style.display = lineCount <= 5 ? "none" : "";
       toggleBtn.textContent = vizPreviewExpanded ? "Show less" : "Show all";
@@ -509,26 +510,31 @@ onReady(() => {
       const sep =
         i > 0 ? '<div class="border-t border-base-200 my-1.5"></div>' : "";
 
-      if (hasSvg) {
-        const pngCmd = fullCmd.replaceAll(".svg", ".png");
-        return (
-          sep +
-          '<div class="truncate">' +
-          esc(fullCmd) +
-          "</div>" +
-          '<div class="truncate text-base-400">' +
-          esc(pngCmd) +
-          "</div>"
-        );
-      } else if (hasPng) {
-        const svgCmd = fullCmd.replaceAll(".png", ".svg");
+      if (hasMulti) {
+        let svgCmd, pngCmd, txtCmd;
+        if (hasPng) {
+          svgCmd = fullCmd.replaceAll(".png", ".svg");
+          pngCmd = fullCmd;
+          txtCmd = fullCmd.replaceAll(".png", ".txt");
+        } else if (hasTxt) {
+          svgCmd = fullCmd.replaceAll(".txt", ".svg");
+          pngCmd = fullCmd.replaceAll(".txt", ".png");
+          txtCmd = fullCmd;
+        } else {
+          svgCmd = fullCmd;
+          pngCmd = fullCmd.replaceAll(".svg", ".png");
+          txtCmd = fullCmd.replaceAll(".svg", ".txt");
+        }
         return (
           sep +
           '<div class="truncate">' +
           esc(svgCmd) +
           "</div>" +
           '<div class="truncate text-base-400">' +
-          esc(fullCmd) +
+          esc(pngCmd) +
+          "</div>" +
+          '<div class="truncate text-base-400">' +
+          esc(txtCmd) +
           "</div>"
         );
       } else {
@@ -536,7 +542,7 @@ onReady(() => {
       }
     });
 
-    const maxCombos = hasDual ? 2 : 5;
+    const maxCombos = hasMulti ? 2 : 5;
     if (el) {
       allVizLines = allLines.map((l) => {
         const tmp = document.createElement("div");
