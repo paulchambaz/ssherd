@@ -232,14 +232,13 @@ func (c *Client) CopyLocalToRemote(localDir, remoteDir string) error {
 
 	encoded := base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	// Envoyer via SSH : décode le base64 et extrait le tar sur le remote.
+	// Envoyer via stdin pour éviter les limites de longueur de commande SSH.
 	cmd := fmt.Sprintf(
-		"mkdir -p %s && printf '%%s' %s | base64 -d | tar -xzf - -C %s 2>/dev/null",
+		"mkdir -p %s && base64 -d | tar -xzf - -C %s",
 		shellEscape(remoteDir),
-		shellEscape(encoded),
 		shellEscape(remoteDir),
 	)
-	_, stderr, code, err := c.Run(cmd)
+	_, stderr, code, err := c.RunWithStdin(cmd, []byte(encoded))
 	if err != nil {
 		return fmt.Errorf("remote extract: %w", err)
 	}

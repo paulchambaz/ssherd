@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"log"
@@ -132,6 +133,47 @@ func (c *Client) Run(command string) (stdout string, stderr string, exitCode int
 	}
 	defer session.Close()
 
+	var stdoutBuf, stderrBuf strings.Builder
+	session.Stdout = &stdoutBuf
+	session.Stderr = &stderrBuf
+
+	wrapped := "zsh -i -c " + shellEscape(command)
+	runErr := session.Run(wrapped)
+	stdout = stdoutBuf.String()
+	stderr = stderrBuf.String()
+	if runErr != nil {
+		if exitErr, ok := runErr.(*ssh.ExitError); ok {
+			return stdout, stderr, exitErr.ExitStatus(), nil
+		}
+		return stdout, stderr, -1, runErr
+	}
+	return stdout, stderr, 0, nil
+}
+
+func (c *Client) RunWithStdin(command string, input []byte) (stdout string, stderr string, exitCode int, err error) {
+	waitStart := time.Now()
+	c.mu.Lock()
+	waitDur := time.Since(waitStart)
+	if waitDur > 100*time.Millisecond {
+		log.Printf("ssh: [%s] RunWithStdin waited %s on mutex for: %s", c.name, waitDur.Round(time.Millisecond), truncateCmd(command))
+	}
+
+	execStart := time.Now()
+	defer func() {
+		c.mu.Unlock()
+		elapsed := time.Since(execStart)
+		if elapsed > 3*time.Second {
+			log.Printf("ssh: [%s] RunWithStdin took %s (exit=%d) for: %s", c.name, elapsed.Round(time.Millisecond), exitCode, truncateCmd(command))
+		}
+	}()
+
+	session, err := c.target.NewSession()
+	if err != nil {
+		return "", "", -1, fmt.Errorf("new session failed: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdin = bytes.NewReader(input)
 	var stdoutBuf, stderrBuf strings.Builder
 	session.Stdout = &stdoutBuf
 	session.Stderr = &stderrBuf
