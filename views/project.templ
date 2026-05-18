@@ -35,7 +35,7 @@ templ ProjectPage(data internal.ProjectPageData) {
 				case internal.TabDashboard:
 					@projectDashboard(data.Project, data.Jobs, data.Visualizations)
 				case internal.TabJobs:
-					@projectJobs(data.Project, data.Jobs)
+					@projectJobs(data.Project, data.Jobs, data.Page, data.TotalPages, data.TotalJobs)
 				case internal.TabVisualizations:
 					@projectVisualizations(data.Project, data.Visualizations)
 				case internal.TabFiles:
@@ -102,7 +102,8 @@ templ projectDashboard(p *internal.Project, jobs []*internal.Job, vizs []*intern
 			if len(jobs) == 0 {
 				<div class="px-4 py-10 text-center text-base-400 text-sm">No jobs yet</div>
 			} else {
-				for i, j := range jobs {
+				{{ limit := 20; if len(jobs) < limit { limit = len(jobs) } }}
+				for i, j := range jobs[:limit] {
 					<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs/" + j.ID) } class={ "flex items-center justify-between px-4 py-2.5 hover:bg-base-50", templ.KV("border-t border-base-300", i > 0) }>
 						<span class="text-sm truncate max-w-[200px]">{ j.DisplayName }</span>
 						<span class={ "text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ml-2", j.Status.BadgeClass() }>{ j.Status.Label() }</span>
@@ -127,11 +128,11 @@ templ statCard(label, value, kind string) {
 	</div>
 }
 
-templ projectJobs(p *internal.Project, jobs []*internal.Job) {
+templ projectJobs(p *internal.Project, jobs []*internal.Job, page, totalPages, totalJobs int) {
 	<div class="flex items-center justify-between mb-4">
 		<div class="flex items-center gap-3">
 			<h2 class="text-base font-semibold">Jobs</h2>
-			<span class="text-sm text-base-400">{ fmt.Sprintf("%d total", len(jobs)) }</span>
+			<span class="text-sm text-base-400">{ fmt.Sprintf("%d total", totalJobs) }</span>
 		</div>
 		<div class="flex items-center gap-2">
 			<form method="POST" action={ templ.SafeURL("/projects/" + p.Slug + "/jobs/delete-finished") }>
@@ -177,6 +178,41 @@ templ projectJobs(p *internal.Project, jobs []*internal.Job) {
 					@jobRowCells(j)
 				</div>
 			}
+		}
+	</div>
+	if totalPages > 1 {
+		@jobsPagination(p.Slug, page, totalPages)
+	}
+}
+
+templ jobsPagination(slug string, page, totalPages int) {
+	{{
+		start := page - 5
+		if start < 1 { start = 1 }
+		end := page + 5
+		if end > totalPages { end = totalPages }
+	}}
+	<div class="flex items-center justify-center gap-1 mt-4 flex-wrap">
+		if page > 1 {
+			<a href={ templ.SafeURL(fmt.Sprintf("/projects/%s/jobs?page=1", slug)) } class="px-2.5 py-1.5 text-sm border border-base-300 rounded-md hover:bg-base-50">First</a>
+			<a href={ templ.SafeURL(fmt.Sprintf("/projects/%s/jobs?page=%d", slug, page-1)) } class="px-2.5 py-1.5 text-sm border border-base-300 rounded-md hover:bg-base-50">←</a>
+		}
+		if start > 1 {
+			<span class="px-2 text-base-400 text-sm">…</span>
+		}
+		for i := start; i <= end; i++ {
+			if i == page {
+				<span class="px-2.5 py-1.5 text-sm border border-accent-500 bg-accent-500 text-white rounded-md">{ fmt.Sprintf("%d", i) }</span>
+			} else {
+				<a href={ templ.SafeURL(fmt.Sprintf("/projects/%s/jobs?page=%d", slug, i)) } class="px-2.5 py-1.5 text-sm border border-base-300 rounded-md hover:bg-base-50">{ fmt.Sprintf("%d", i) }</a>
+			}
+		}
+		if end < totalPages {
+			<span class="px-2 text-base-400 text-sm">…</span>
+		}
+		if page < totalPages {
+			<a href={ templ.SafeURL(fmt.Sprintf("/projects/%s/jobs?page=%d", slug, page+1)) } class="px-2.5 py-1.5 text-sm border border-base-300 rounded-md hover:bg-base-50">→</a>
+			<a href={ templ.SafeURL(fmt.Sprintf("/projects/%s/jobs?page=%d", slug, totalPages)) } class="px-2.5 py-1.5 text-sm border border-base-300 rounded-md hover:bg-base-50">Last</a>
 		}
 	</div>
 }

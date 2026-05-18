@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/paulchambaz/ssherd/internal"
@@ -44,6 +45,29 @@ func (s *Server) renderProjectTab(w http.ResponseWriter, r *http.Request, tab in
 		jobs, err := internal.LoadJobs(s.cfg.CachePath, p.ID)
 		if err != nil {
 			log.Printf("Failed to load jobs for project %s: %v", p.ID, err)
+		}
+		if tab == internal.TabJobs {
+			const jobsPerPage = 200
+			data.TotalJobs = len(jobs)
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			if page < 1 {
+				page = 1
+			}
+			totalPages := (len(jobs) + jobsPerPage - 1) / jobsPerPage
+			if totalPages < 1 {
+				totalPages = 1
+			}
+			if page > totalPages {
+				page = totalPages
+			}
+			start := (page - 1) * jobsPerPage
+			end := start + jobsPerPage
+			if end > len(jobs) {
+				end = len(jobs)
+			}
+			jobs = jobs[start:end]
+			data.Page = page
+			data.TotalPages = totalPages
 		}
 		data.Jobs = jobs
 	}
