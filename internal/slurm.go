@@ -125,7 +125,7 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 		HasOutput:      input.OutputArgument != "" && input.OutputPath != "",
 	}
 
-	tmpl := template.Must(template.New("slurm").Parse(slurmTemplate))
+	tmpl := template.Must(template.New("slurm").Delims("[[", "]]").Parse(slurmTemplate))
 	var buf strings.Builder
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "# Error generating script: " + err.Error() + "\n"
@@ -177,70 +177,70 @@ var slurmTemplate = `#!/bin/bash
 #
 # Prerequisites:
 #   1. uv must be available in $PATH on compute nodes
-#   2. Project cloned and up to date at: {{.Project.RemotePath}}
+#   2. Project cloned and up to date at: [[.Project.RemotePath]]
 #
-#SBATCH --job-name={{.Input.NamePrefix}}
-#SBATCH --partition={{.Partition}}
-#SBATCH --gres={{.GresSpec}}
-#SBATCH --time={{.MaxTimeStr}}
+#SBATCH --job-name=[[.Input.NamePrefix]]
+#SBATCH --partition=[[.Partition]]
+#SBATCH --gres=[[.GresSpec]]
+#SBATCH --time=[[.MaxTimeStr]]
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --output={{.Project.RemotePath}}/logs/slurm_%A_%a.out
-#SBATCH --error={{.Project.RemotePath}}/logs/slurm_%A_%a.err
-#SBATCH --array=0-{{.ArrayEnd}}
+#SBATCH --output=[[.Project.RemotePath]]/logs/slurm_%A_%a.out
+#SBATCH --error=[[.Project.RemotePath]]/logs/slurm_%A_%a.err
+#SBATCH --array=0-[[.ArrayEnd]]
 
 # --- Parameters ---
-SEEDS=({{range .Seeds}}{{.}} {{end}})
-{{- range .AxisDecls}}
-{{.VarName}}_VALUES=({{range .Values}}"{{.}}" {{end}})
-{{- end}}
+SEEDS=([[range .Seeds]][[.]] [[end]])
+[[-  range .AxisDecls]]
+[[.VarName]]_VALUES=([[range .Values]]"[[.]]" [[end]])
+[[-  end]]
 
 N_SEEDS=${#SEEDS[@]}
-{{- range .AxisDecls}}
-N_{{.VarName}}=${#{{.VarName}}_VALUES[@]}
-{{- end}}
+[[- range .AxisDecls]]
+N_[[.VarName]]=${#[[.VarName]]_VALUES[@]}
+[[- end]]
 
 SEED_IDX=$(( SLURM_ARRAY_TASK_ID % N_SEEDS ))
-{{- range .AxisDecls}}
-{{.VarName}}_IDX={{.IndexExpr}}
-{{- end}}
+[[- range .AxisDecls]]
+[[.VarName]]_IDX=[[.IndexExpr]]
+[[- end]]
 
 SEED=${SEEDS[$SEED_IDX]}
-{{- range .AxisDecls}}
-{{.VarName}}=${{{.VarName}}_VALUES[${{.VarName}}_IDX]}
-{{- end}}
-{{- range .AxisDecls}}{{if .NamedVar}}
-{{.NamedVar}}="${{{.VarName}}}"
-{{- end}}{{end}}
-{{if .AxisDecls}}
-ABLATION=$(echo "{{.AblationParts}}" | sed 's/ /_/g; s/-/_/g; s/__*/_/g; s/^_*//; s/_*$//')
+[[- range .AxisDecls]]
+[[.VarName]]=${[[.VarName]]_VALUES[$[[.VarName]]_IDX]}
+[[- end]]
+[[- range .AxisDecls]][[if .NamedVar]]
+[[.NamedVar]]="${[[.VarName]]}"
+[[- end]][[end]]
+[[if .AxisDecls]]
+ABLATION=$(echo "[[.AblationParts]]" | sed 's/ /_/g; s/-/_/g; s/__*/_/g; s/^_*//; s/_*$//')
 [ -z "$ABLATION" ] && ABLATION="run"
-{{end}}
+[[end]]
 # --- Paths ---
-{{- if .HasOutput}}
-OUTPUT_LOCAL="$SLURM_GPUTMPDIR/{{.Project.DataPath}}/{{.OutputPathBash}}"
-OUTPUT_NFS="{{.Project.RemotePath}}/{{.OutputPathBash}}"
+[[- if .HasOutput]]
+OUTPUT_LOCAL="$SLURM_GPUTMPDIR/[[.Project.DataPath]]/[[.OutputPathBash]]"
+OUTPUT_NFS="[[.Project.RemotePath]]/[[.OutputPathBash]]"
 
-mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS" "{{.Project.RemotePath}}/logs"
-{{- else}}
-mkdir -p "{{.Project.RemotePath}}/logs"
-{{- end}}
+mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS" "[[.Project.RemotePath]]/logs"
+[[- else]]
+mkdir -p "[[.Project.RemotePath]]/logs"
+[[- end]]
 
 # --- Sync ---
 sync_watch() {
     rsync -a \
-{{- range .OutputFiles}}
-        --include='{{.}}' \
-{{- end}}
+[[- range .OutputFiles]]
+        --include='[[.]]' \
+[[- end]]
         --exclude='*' \
         "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" 2>/dev/null || true
 }
 
 sync_full() {
     rsync -a \
-{{- range .OutputFiles}}
-        --include='{{.}}' \
-{{- end}}
+[[- range .OutputFiles]]
+        --include='[[.]]' \
+[[- end]]
         --include='*.ckpt' \
         --exclude='*' \
         "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" 2>/dev/null || true
@@ -253,31 +253,31 @@ background_sync() {
 }
 background_sync &
 SYNC_BG_PID=$!
-{{if .HasResume}}
+[[if .HasResume]]
 # --- Resume ---
 RESUME_FLAG=""
 if [ -f "$OUTPUT_NFS/checkpoint.ckpt" ]; then
     cp "$OUTPUT_NFS/checkpoint.ckpt" "$OUTPUT_LOCAL/checkpoint.ckpt"
-    RESUME_FLAG="{{.Input.RetrySuffix}}"
+    RESUME_FLAG="[[.Input.RetrySuffix]]"
 fi
-{{end}}
+[[end]]
 # --- Run ---
-cd {{.Project.RemotePath}}
+cd [[.Project.RemotePath]]
 
-CMD=(uv run {{.Input.BaseCommand}})
-{{- range .AxisDecls}}
-CMD+=( ${{{.VarName}}} )
-{{- end}}
-CMD+=({{.Input.SeedFlag}} $SEED)
-{{- if .HasLog}}
-CMD+=({{.Input.LogArgument}} "$OUTPUT_LOCAL/{{.Input.LogPath}}")
-{{- end}}
-{{- if .HasOutput}}
-CMD+=({{.Input.OutputArgument}} "$OUTPUT_LOCAL")
-{{- end}}
-{{- if .HasResume}}
+CMD=(uv run [[.Input.BaseCommand]])
+[[- range .AxisDecls]]
+CMD+=( ${[[.VarName]]} )
+[[- end]]
+CMD+=([[.Input.SeedFlag]] $SEED)
+[[- if .HasLog]]
+CMD+=([[.Input.LogArgument]] "$OUTPUT_LOCAL/[[.Input.LogPath]]")
+[[- end]]
+[[- if .HasOutput]]
+CMD+=([[.Input.OutputArgument]] "$OUTPUT_LOCAL")
+[[- end]]
+[[- if .HasResume]]
 CMD+=($RESUME_FLAG)
-{{- end}}
+[[- end]]
 "${CMD[@]}"
 
 kill $SYNC_BG_PID 2>/dev/null
