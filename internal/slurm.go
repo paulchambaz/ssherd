@@ -36,21 +36,22 @@ type slurmAxisDecl struct {
 }
 
 type slurmTemplateData struct {
-	Project        Project
-	Input          SlurmInput
-	JobName        string
-	Partition      string
-	GresSpec       string
-	MaxTimeStr     string
-	ArrayEnd       int
-	Seeds          []int
-	AxisDecls      []slurmAxisDecl
-	AblationParts  string
-	OutputPathBash string
-	OutputFiles    []string
-	HasResume      bool
-	HasLog         bool
-	HasOutput      bool
+	Project         Project
+	Input           SlurmInput
+	JobName         string
+	ISIRProjectPath string
+	Partition       string
+	GresSpec        string
+	MaxTimeStr      string
+	ArrayEnd        int
+	Seeds           []int
+	AxisDecls       []slurmAxisDecl
+	AblationParts   string
+	OutputPathBash  string
+	OutputFiles     []string
+	HasResume       bool
+	HasLog          bool
+	HasOutput       bool
 }
 
 func GenerateSlurmScript(project Project, input SlurmInput) string {
@@ -110,12 +111,15 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 	}
 
 	jobName := strings.ReplaceAll(input.NamePrefix, " ", "_")
+	// TODO: replace with project.ISIRPath once that field is added to Project
+	isirProjectPath := "/home/chambaz/isir"
 
 	data := slurmTemplateData{
-		Project:        project,
-		Input:          input,
-		JobName:        jobName,
-		Partition:      partition,
+		Project:         project,
+		Input:           input,
+		JobName:         jobName,
+		ISIRProjectPath: isirProjectPath,
+		Partition:       partition,
 		GresSpec:       gres,
 		MaxTimeStr:     fmt.Sprintf("%02d:00:00", input.MaxHours),
 		ArrayEnd:       total - 1,
@@ -189,8 +193,8 @@ var slurmTemplate = `#!/bin/bash -l
 #SBATCH --time=[[.MaxTimeStr]]
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --output=[[.Project.RemotePath]]/logs/slurm_%A_%a.out
-#SBATCH --error=[[.Project.RemotePath]]/logs/slurm_%A_%a.err
+#SBATCH --output=[[.ISIRProjectPath]]/logs/slurm_%A_%a.out
+#SBATCH --error=[[.ISIRProjectPath]]/logs/slurm_%A_%a.err
 #SBATCH --array=0-[[.ArrayEnd]]
 
 # --- Parameters ---
@@ -223,11 +227,11 @@ ABLATION=$(echo "[[.AblationParts]]" | sed 's/ /_/g; s/__*/_/g; s/^_*//; s/_*$//
 # --- Paths ---
 [[- if .HasOutput]]
 OUTPUT_LOCAL="$SLURM_GPUTMPDIR/[[.Project.DataPath]]/[[.OutputPathBash]]"
-OUTPUT_NFS="[[.Project.RemotePath]]/[[.OutputPathBash]]"
+OUTPUT_NFS="[[.ISIRProjectPath]]/[[.OutputPathBash]]"
 
-mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS" "[[.Project.RemotePath]]/logs"
+mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS" "[[.ISIRProjectPath]]/logs"
 [[- else]]
-mkdir -p "[[.Project.RemotePath]]/logs"
+mkdir -p "[[.ISIRProjectPath]]/logs"
 [[- end]]
 
 # --- Sync ---
@@ -277,7 +281,7 @@ if [ -f "$OUTPUT_NFS/checkpoint.ckpt" ]; then
 fi
 [[end]]
 # --- Run ---
-cd [[.Project.RemotePath]]
+cd [[.ISIRProjectPath]]
 
 CMD=(uv run [[.Input.BaseCommand]])
 [[- range .AxisDecls]]
