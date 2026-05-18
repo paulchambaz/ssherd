@@ -38,6 +38,7 @@ type slurmAxisDecl struct {
 type slurmTemplateData struct {
 	Project        Project
 	Input          SlurmInput
+	JobName        string
 	Partition      string
 	GresSpec       string
 	MaxTimeStr     string
@@ -108,9 +109,12 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 		}
 	}
 
+	jobName := strings.ReplaceAll(input.NamePrefix, " ", "_")
+
 	data := slurmTemplateData{
 		Project:        project,
 		Input:          input,
+		JobName:        jobName,
 		Partition:      partition,
 		GresSpec:       gres,
 		MaxTimeStr:     fmt.Sprintf("%02d:00:00", input.MaxHours),
@@ -173,13 +177,13 @@ func resolveSlurmPlaceholders(outputPath string, axes []SlurmAxis) string {
 	return result
 }
 
-var slurmTemplate = `#!/bin/bash
+var slurmTemplate = `#!/bin/bash -l
 #
 # Prerequisites:
 #   1. uv must be available in $PATH on compute nodes
 #   2. Project cloned and up to date at: [[.Project.RemotePath]]
 #
-#SBATCH --job-name=[[.Input.NamePrefix]]
+#SBATCH --job-name=[[.JobName]]
 #SBATCH --partition=[[.Partition]]
 #SBATCH --gres=[[.GresSpec]]
 #SBATCH --time=[[.MaxTimeStr]]
@@ -213,7 +217,7 @@ SEED=${SEEDS[$SEED_IDX]}
 [[.NamedVar]]="${[[.VarName]]}"
 [[- end]][[end]]
 [[if .AxisDecls]]
-ABLATION=$(echo "[[.AblationParts]]" | sed 's/ /_/g; s/-/_/g; s/__*/_/g; s/^_*//; s/_*$//')
+ABLATION=$(echo "[[.AblationParts]]" | sed 's/ /_/g; s/__*/_/g; s/^_*//; s/_*$//')
 [ -z "$ABLATION" ] && ABLATION="run"
 [[end]]
 # --- Paths ---
@@ -229,24 +233,35 @@ mkdir -p "[[.Project.RemotePath]]/logs"
 # --- Sync ---
 sync_watch() {
     rsync -a \
+        --include='progress.json' \
 [[- range .OutputFiles]]
         --include='[[.]]' \
 [[- end]]
         --exclude='*' \
-        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" 2>/dev/null || true
+        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" \
+        || echo "[ssherd] WARNING: sync_watch failed at $(date -u)" >&2
 }
 
 sync_full() {
     rsync -a \
+        --include='progress.json' \
 [[- range .OutputFiles]]
         --include='[[.]]' \
 [[- end]]
         --include='*.ckpt' \
         --exclude='*' \
-        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" 2>/dev/null || true
+        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" \
+        || echo "[ssherd] WARNING: sync_full failed at $(date -u)" >&2
 }
 
-trap sync_full EXIT
+cleanup() {
+    kill $SYNC_BG_PID 2>/dev/null
+    kill $PYTHON_PID 2>/dev/null
+    wait $PYTHON_PID 2>/dev/null
+    wait $SYNC_BG_PID 2>/dev/null
+    sync_full
+}
+trap cleanup EXIT
 
 background_sync() {
     while true; do sleep 600; sync_watch; done
@@ -278,8 +293,7 @@ CMD+=([[.Input.OutputArgument]] "$OUTPUT_LOCAL")
 [[- if .HasResume]]
 CMD+=($RESUME_FLAG)
 [[- end]]
-"${CMD[@]}"
-
-kill $SYNC_BG_PID 2>/dev/null
-wait $SYNC_BG_PID 2>/dev/null
+"${CMD[@]}" &
+PYTHON_PID=$!
+wait $PYTHON_PID
 `
