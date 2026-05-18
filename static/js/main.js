@@ -314,6 +314,7 @@ onReady(() => {
   });
 
   window.addAxis = addAxis;
+  window.getBatchAxes = getAxes;
 
   // ─── Redo : restauration du FormState ────────────────────────────────────
   const stateJSON = form.dataset.formState;
@@ -1027,6 +1028,36 @@ onReady(() => {
     loadOutput();
   }
 });
+
+window.exportToIsir = async function(btn) {
+  const form = document.getElementById("batch-form");
+  if (!form) return;
+
+  const axes = window.getBatchAxes ? window.getBatchAxes() : [];
+  const hidden = document.getElementById("axes_json");
+  if (hidden) hidden.value = JSON.stringify(axes);
+
+  const prev = btn.innerHTML;
+  btn.innerHTML = "Copying...";
+  btn.disabled = true;
+
+  try {
+    const data = new URLSearchParams(new FormData(form));
+    const resp = await fetch(btn.dataset.exportUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: data.toString(),
+    });
+    if (!resp.ok) throw new Error("Server error " + resp.status);
+    const script = await resp.text();
+    await navigator.clipboard.writeText(script);
+    btn.innerHTML = "Copied!";
+    setTimeout(() => { btn.innerHTML = prev; btn.disabled = false; }, 2000);
+  } catch (e) {
+    btn.innerHTML = "Failed";
+    setTimeout(() => { btn.innerHTML = prev; btn.disabled = false; }, 2000);
+  }
+};
 
 window.copyBatchPreview = function() {
   copyToClipboard(allBatchLines.join("\n"), "batch-copy-all");

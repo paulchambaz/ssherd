@@ -371,9 +371,7 @@ func (s *Server) postExportSlurm(w http.ResponseWriter, r *http.Request) {
 
 	script := internal.GenerateSlurmScript(*p, input)
 
-	filename := fmt.Sprintf("slurm_%s.sh", internal.Slugify(form.NamePrefix))
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	fmt.Fprint(w, script)
 }
 

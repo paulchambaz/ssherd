@@ -230,9 +230,9 @@ templ newBatchForm(p *internal.Project, gpuModels []string, formStateJSON string
 			<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
 				Cancel
 			</a>
-			<button type="submit"
-				formaction={ templ.SafeURL("/projects/" + p.Slug + "/jobs/export-slurm") }
-				formmethod="POST"
+			<button type="button"
+				data-export-url={ "/projects/" + p.Slug + "/jobs/export-slurm" }
+				onclick="exportToIsir(this)"
 				class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
 				To ISIR cluster
 			</button>
