@@ -128,6 +128,16 @@ templ newBatchForm(p *internal.Project, gpuModels []string, formStateJSON string
 							}
 						</select>
 					</div>
+					<div class="flex flex-col gap-1.5 px-4 py-3 w-full md:w-32 border-b md:border-b-0 md:border-r border-base-300">
+						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Max hours / job</label>
+						<input
+							type="number"
+							name="max_hours"
+							value="4"
+							min="1"
+							class="bg-transparent text-sm font-mono focus:outline-none"
+						/>
+					</div>
 					<div class="flex flex-col gap-1.5 px-4 py-3 w-full md:w-32">
 						<label class="text-xs font-semibold text-base-500 uppercase tracking-wide">Max retries</label>
 						<input
@@ -220,6 +230,12 @@ templ newBatchForm(p *internal.Project, gpuModels []string, formStateJSON string
 			<a href={ templ.SafeURL("/projects/" + p.Slug + "/jobs") } class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
 				Cancel
 			</a>
+			<button type="submit"
+				formaction={ templ.SafeURL("/projects/" + p.Slug + "/jobs/export-slurm") }
+				formmethod="POST"
+				class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
+				To ISIR cluster
+			</button>
 			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
 				Create batch
 			</button>

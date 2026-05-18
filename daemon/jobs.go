@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -36,6 +37,7 @@ type BatchFormState struct {
 	OutputArgument string      `json:"output_argument"`
 	OutputPath     string      `json:"output_path"`
 	OutputFiles    string      `json:"output_files"`
+	MaxHours       int         `json:"max_hours"`
 	Axes           []axisInput `json:"axes"`
 }
 
@@ -80,23 +82,13 @@ func (s *Server) getNewBatch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
-	p, err := s.findProjectBySlug(r.PathValue("slug"))
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form", http.StatusBadRequest)
-		return
-	}
-
+// parseBatchForm extrait les champs du formulaire New Batch depuis r.
+// Suppose que r.ParseForm() a déjà été appelé.
+func parseBatchForm(r *http.Request) (BatchFormState, []axisInput, error) {
 	namePrefix := strings.TrimSpace(r.FormValue("name_prefix"))
 	baseCommand := strings.TrimSpace(r.FormValue("base_command"))
 	if namePrefix == "" || baseCommand == "" {
-		http.Error(w, "Name prefix and base command are required", http.StatusBadRequest)
-		return
+		return BatchFormState{}, nil, fmt.Errorf("name prefix and base command are required")
 	}
 
 	seedFlag := r.FormValue("seed_flag")
@@ -119,32 +111,27 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil || minVRAM < 0 {
 		minVRAM = 2048
 	}
+	maxHours, err := strconv.Atoi(r.FormValue("max_hours"))
+	if err != nil || maxHours < 1 {
+		maxHours = 4
+	}
+
 	preferredGPU := r.FormValue("preferred_gpu")
 	retrySuffix := strings.TrimSpace(r.FormValue("retry_suffix"))
 	logArgument := strings.TrimSpace(r.FormValue("log_argument"))
 	outputArgument := strings.TrimSpace(r.FormValue("output_argument"))
 	outputFilesRaw := r.FormValue("output_files")
-
 	logPathTpl := strings.TrimSpace(r.FormValue("log_path"))
 	outputPathTpl := strings.TrimSpace(r.FormValue("output_path"))
-
-	var outputFilesTpls []string
-	for _, line := range strings.Split(outputFilesRaw, "\n") {
-		if f := strings.TrimSpace(line); f != "" {
-			outputFilesTpls = append(outputFilesTpls, f)
-		}
-	}
 
 	var axes []axisInput
 	if raw := r.FormValue("axes_json"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &axes); err != nil {
-			http.Error(w, "Invalid axes data", http.StatusBadRequest)
-			return
+			return BatchFormState{}, nil, fmt.Errorf("invalid axes data")
 		}
 	}
 
-	// Sérialiser le FormState une seule fois — partagé par tous les jobs du batch.
-	formState := BatchFormState{
+	form := BatchFormState{
 		NamePrefix:     namePrefix,
 		BaseCommand:    baseCommand,
 		SeedFlag:       seedFlag,
@@ -159,12 +146,56 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 		OutputArgument: outputArgument,
 		OutputPath:     outputPathTpl,
 		OutputFiles:    outputFilesRaw,
+		MaxHours:       maxHours,
 		Axes:           axes,
 	}
+	return form, axes, nil
+}
+
+func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+
+	formState, axes, err := parseBatchForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	formStateJSON, err := json.Marshal(formState)
 	if err != nil {
 		http.Error(w, "Failed to marshal form state", http.StatusInternalServerError)
 		return
+	}
+
+	namePrefix := formState.NamePrefix
+	baseCommand := formState.BaseCommand
+	seedFlag := formState.SeedFlag
+	startSeed := formState.StartSeed
+	numSeeds := formState.NumSeeds
+	maxRetries := formState.MaxRetries
+	minVRAM := formState.MinVRAM
+	preferredGPU := formState.PreferredGPU
+	retrySuffix := formState.RetrySuffix
+	logArgument := formState.LogArgument
+	outputArgument := formState.OutputArgument
+	outputFilesRaw := formState.OutputFiles
+	logPathTpl := formState.LogPath
+	outputPathTpl := formState.OutputPath
+
+	var outputFilesTpls []string
+	for _, line := range strings.Split(outputFilesRaw, "\n") {
+		if f := strings.TrimSpace(line); f != "" {
+			outputFilesTpls = append(outputFilesTpls, f)
+		}
 	}
 
 	axisValues := make([][]string, 0, len(axes))
@@ -296,6 +327,54 @@ func (s *Server) postBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/projects/"+p.Slug+"/jobs", http.StatusSeeOther)
+}
+
+func (s *Server) postExportSlurm(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+
+	form, axes, err := parseBatchForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	slurmAxes := make([]internal.SlurmAxis, len(axes))
+	for i, ax := range axes {
+		slurmAxes[i] = internal.SlurmAxis{Name: ax.Name, Values: ax.Values}
+	}
+
+	input := internal.SlurmInput{
+		NamePrefix:     form.NamePrefix,
+		BaseCommand:    form.BaseCommand,
+		SeedFlag:       form.SeedFlag,
+		StartSeed:      form.StartSeed,
+		NumSeeds:       form.NumSeeds,
+		MaxHours:       form.MaxHours,
+		PreferredGPU:   form.PreferredGPU,
+		RetrySuffix:    form.RetrySuffix,
+		LogArgument:    form.LogArgument,
+		LogPath:        form.LogPath,
+		OutputArgument: form.OutputArgument,
+		OutputPath:     form.OutputPath,
+		OutputFiles:    form.OutputFiles,
+		Axes:           slurmAxes,
+	}
+
+	script := internal.GenerateSlurmScript(*p, input)
+
+	filename := fmt.Sprintf("slurm_%s.sh", internal.Slugify(form.NamePrefix))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	fmt.Fprint(w, script)
 }
 
 func (s *Server) getJobDetail(w http.ResponseWriter, r *http.Request) {
