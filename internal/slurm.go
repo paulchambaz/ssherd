@@ -58,11 +58,16 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 	partition := slurmPartition(input.MaxHours)
 	gres := slurmGres(partition, input.PreferredGPU)
 
-	total := input.NumSeeds
+	axes := make([]SlurmAxis, 0, len(input.Axes))
 	for _, ax := range input.Axes {
 		if len(ax.Values) > 0 {
-			total *= len(ax.Values)
+			axes = append(axes, ax)
 		}
+	}
+
+	total := input.NumSeeds
+	for _, ax := range axes {
+		total *= len(ax.Values)
 	}
 
 	seeds := make([]int, input.NumSeeds)
@@ -70,39 +75,34 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 		seeds[i] = input.StartSeed + i
 	}
 
-	// Build axis declarations with index expressions (seeds innermost, axis[0] outermost)
-	axisDecls := make([]slurmAxisDecl, len(input.Axes))
-	divisor := input.NumSeeds
-	for i := len(input.Axes) - 1; i >= 0; i-- {
-		ax := input.Axes[i]
-		n := len(ax.Values)
-		if n == 0 {
-			n = 1
-		}
+	axisDecls := make([]slurmAxisDecl, len(axes))
+	divisorTerms := []string{"N_SEEDS"}
+	for i := len(axes) - 1; i >= 0; i-- {
+		ax := axes[i]
 		varName := fmt.Sprintf("AXIS_%d", i)
 		namedVar := ""
 		if ax.Name != "" {
 			namedVar = strings.ToUpper(strings.ReplaceAll(ax.Name, "-", "_")) + "_VAL"
 		}
 		axisDecls[i] = slurmAxisDecl{
-			VarName:   varName,
-			NamedVar:  namedVar,
-			Values:    ax.Values,
-			IndexExpr: fmt.Sprintf("$(( (SLURM_ARRAY_TASK_ID / %d) %% %d ))", divisor, n),
+			VarName:  varName,
+			NamedVar: namedVar,
+			Values:   ax.Values,
+			IndexExpr: fmt.Sprintf(
+				"$(( (SLURM_ARRAY_TASK_ID / (%s)) %% N_%s ))",
+				strings.Join(divisorTerms, " * "), varName,
+			),
 		}
-		divisor *= n
+		divisorTerms = append(divisorTerms, "N_"+varName)
 	}
 
-	// Build ablation expression: "${AXIS_0} ${AXIS_1} ..."
 	ablationParts := make([]string, len(axisDecls))
 	for i, d := range axisDecls {
 		ablationParts[i] = "${" + d.VarName + "}"
 	}
 
-	// Resolve placeholders in OutputPath
-	outputPathBash := resolveSlurmPlaceholders(input.OutputPath, input.Axes)
+	outputPathBash := resolveSlurmPlaceholders(input.OutputPath, axes)
 
-	// Parse OutputFiles
 	var outputFiles []string
 	for _, line := range strings.Split(input.OutputFiles, "\n") {
 		if f := strings.TrimSpace(line); f != "" {
@@ -114,23 +114,25 @@ func GenerateSlurmScript(project Project, input SlurmInput) string {
 	// TODO: replace with project.ISIRPath once that field is added to Project
 	isirProjectPath := "/home/chambaz/isir"
 
+	hasOutput := input.OutputArgument != "" && input.OutputPath != ""
+
 	data := slurmTemplateData{
 		Project:         project,
 		Input:           input,
 		JobName:         jobName,
 		ISIRProjectPath: isirProjectPath,
 		Partition:       partition,
-		GresSpec:       gres,
-		MaxTimeStr:     fmt.Sprintf("%02d:00:00", input.MaxHours),
-		ArrayEnd:       total - 1,
-		Seeds:          seeds,
-		AxisDecls:      axisDecls,
-		AblationParts:  strings.Join(ablationParts, " "),
-		OutputPathBash: outputPathBash,
-		OutputFiles:    outputFiles,
-		HasResume:      input.RetrySuffix != "",
-		HasLog:         input.LogArgument != "" && input.LogPath != "",
-		HasOutput:      input.OutputArgument != "" && input.OutputPath != "",
+		GresSpec:        gres,
+		MaxTimeStr:      fmt.Sprintf("%02d:00:00", input.MaxHours),
+		ArrayEnd:        total - 1,
+		Seeds:           seeds,
+		AxisDecls:       axisDecls,
+		AblationParts:   strings.Join(ablationParts, " "),
+		OutputPathBash:  outputPathBash,
+		OutputFiles:     outputFiles,
+		HasResume:       input.RetrySuffix != "" && hasOutput,
+		HasLog:          input.LogArgument != "" && input.LogPath != "",
+		HasOutput:       hasOutput,
 	}
 
 	tmpl := template.Must(template.New("slurm").Delims("[[", "]]").Parse(slurmTemplate))
@@ -182,11 +184,6 @@ func resolveSlurmPlaceholders(outputPath string, axes []SlurmAxis) string {
 }
 
 var slurmTemplate = `#!/bin/bash -l
-#
-# Prerequisites:
-#   1. uv must be available in $PATH on compute nodes
-#   2. Project cloned and up to date at: [[.Project.RemotePath]]
-#
 #SBATCH --job-name=[[.JobName]]
 #SBATCH --partition=[[.Partition]]
 #SBATCH --gres=[[.GresSpec]]
@@ -196,17 +193,20 @@ var slurmTemplate = `#!/bin/bash -l
 #SBATCH --output=[[.ISIRProjectPath]]/logs/slurm_%A_%a.out
 #SBATCH --error=[[.ISIRProjectPath]]/logs/slurm_%A_%a.err
 #SBATCH --array=0-[[.ArrayEnd]]
+#SBATCH --signal=B:TERM@300
 
-# --- Parameters ---
 SEEDS=([[range .Seeds]][[.]] [[end]])
-[[-  range .AxisDecls]]
+[[- range .AxisDecls]]
 [[.VarName]]_VALUES=([[range .Values]]"[[.]]" [[end]])
-[[-  end]]
+[[- end]]
+SYNC_INTERVAL=600
 
 N_SEEDS=${#SEEDS[@]}
 [[- range .AxisDecls]]
 N_[[.VarName]]=${#[[.VarName]]_VALUES[@]}
 [[- end]]
+N_TOTAL=$(( N_SEEDS[[range .AxisDecls]] * N_[[.VarName]][[end]] ))
+[ "$SLURM_ARRAY_TASK_ID" -ge "$N_TOTAL" ] && exit 0
 
 SEED_IDX=$(( SLURM_ARRAY_TASK_ID % N_SEEDS ))
 [[- range .AxisDecls]]
@@ -224,29 +224,12 @@ SEED=${SEEDS[$SEED_IDX]}
 ABLATION=$(echo "[[.AblationParts]]" | sed 's/ /_/g; s/__*/_/g; s/^_*//; s/_*$//')
 [ -z "$ABLATION" ] && ABLATION="run"
 [[end]]
-# --- Paths ---
 [[- if .HasOutput]]
 OUTPUT_LOCAL="$SLURM_GPUTMPDIR/[[.Project.DataPath]]/[[.OutputPathBash]]"
 OUTPUT_NFS="[[.ISIRProjectPath]]/[[.OutputPathBash]]"
-
 mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS" "[[.ISIRProjectPath]]/logs"
-[[- else]]
-mkdir -p "[[.ISIRProjectPath]]/logs"
-[[- end]]
 
-# --- Sync ---
-sync_watch() {
-    rsync -a \
-        --include='progress.json' \
-[[- range .OutputFiles]]
-        --include='[[.]]' \
-[[- end]]
-        --exclude='*' \
-        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" \
-        || echo "[ssherd] WARNING: sync_watch failed at $(date -u)" >&2
-}
-
-sync_full() {
+sync_all() {
     rsync -a \
         --include='progress.json' \
 [[- range .OutputFiles]]
@@ -255,32 +238,46 @@ sync_full() {
         --include='*.ckpt' \
         --exclude='*' \
         "$OUTPUT_LOCAL/" "$OUTPUT_NFS/" \
-        || echo "[ssherd] WARNING: sync_full failed at $(date -u)" >&2
+        || echo "[ssherd] WARNING: sync failed at $(date -u)" >&2
 }
+[[- else]]
+mkdir -p "[[.ISIRProjectPath]]/logs"
 
+sync_all() { :; }
+[[- end]]
+
+CLEANED_UP=0
 cleanup() {
+    [ "$CLEANED_UP" -eq 1 ] && return
+    CLEANED_UP=1
     kill $SYNC_BG_PID 2>/dev/null
     kill $PYTHON_PID 2>/dev/null
     wait $PYTHON_PID 2>/dev/null
     wait $SYNC_BG_PID 2>/dev/null
-    sync_full
+    sync_all
 }
-trap cleanup EXIT
-
+trap cleanup EXIT TERM INT
+[[if .HasOutput]]
 background_sync() {
-    while true; do sleep 600; sync_watch; done
+    while true; do sleep "$SYNC_INTERVAL"; sync_all; done
 }
 background_sync &
 SYNC_BG_PID=$!
-[[if .HasResume]]
-# --- Resume ---
+[[end]]
+[[- if .HasResume]]
 RESUME_FLAG=""
 if [ -f "$OUTPUT_NFS/checkpoint.ckpt" ]; then
-    cp "$OUTPUT_NFS/checkpoint.ckpt" "$OUTPUT_LOCAL/checkpoint.ckpt"
+    rsync -a \
+        --include='progress.json' \
+[[- range .OutputFiles]]
+        --include='[[.]]' \
+[[- end]]
+        --include='*.ckpt' \
+        --exclude='*' \
+        "$OUTPUT_NFS/" "$OUTPUT_LOCAL/"
     RESUME_FLAG="[[.Input.RetrySuffix]]"
 fi
 [[end]]
-# --- Run ---
 cd [[.ISIRProjectPath]]
 
 CMD=(uv run [[.Input.BaseCommand]])

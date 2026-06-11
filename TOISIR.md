@@ -1,408 +1,327 @@
-# Design Document — Export SLURM Script (ssherd)
+# Design Document — SLURM Backend for ssherd
 
-**Version 1.1 — Cluster ISIR**
-
----
-
-## 1. Contexte et objectif
-
-ssherd orchestre aujourd'hui des jobs sur des machines accessibles en SSH direct (PPTI), en gérant lui-même le placement, le monitoring via heartbeat NFS, et le transfert de fichiers. L'objectif de cette fonctionnalité est de permettre à l'utilisateur de réutiliser exactement le même formulaire "New Batch" pour générer un script `sbatch` valide, prêt à être soumis sur le cluster ISIR, en un clic.
-
-Le cluster ISIR tourne sous SLURM. La correspondance mentale entre les deux systèmes est la suivante : là où ssherd lance un `nohup zsh run.sh` sur une machine choisie dynamiquement et surveille un heartbeat NFS, SLURM prend en charge le placement, la durée de vie du process, et la gestion des ressources. Le script généré encode tout ce que ssherd ferait au runtime, mais de façon statique et déclarative.
-
-La fonctionnalité se matérialise par un bouton **"To ISIR cluster"** sur la page New Batch, qui soumet le formulaire à un endpoint dédié. Cet endpoint génère le script bash et le retourne en téléchargement direct, sans créer de jobs dans ssherd.
+**Version 1.0**
 
 ---
 
-## 2. Infrastructure du cluster ISIR
+## 1. Context and motivation
 
-### 2.1 Matériel
+ssherd currently manages jobs exclusively through direct SSH connections to individual machines (PPTI model): it picks a machine, opens a connection, writes a `run.sh` on NFS, launches it with `nohup`, and monitors liveness through a heartbeat file. This works well for the PPTI because each machine is an independent unit that ssherd controls entirely.
 
-Le cluster dispose de 29 nœuds, 1224 CPUs, 2 To de RAM, et 12 GPUs répartis en deux modèles : 2× Nvidia Tesla V100-32G et 10× Nvidia RTX A6000-48Go. Il tourne sous Ubuntu Server 20.04 LTS avec SLURM comme ordonnanceur.
+The ISIR cluster and Jean-Zay operate on a fundamentally different model: you submit a job description to a scheduler (SLURM), which decides where and when to run it. You never manage individual machines — you manage jobs. ssherd needs a second backend that speaks SLURM instead of bare SSH.
 
-### 2.2 Partitions disponibles
+The goal of this document is to specify how to extend ssherd with a `SlurmBackend` that supports the ISIR cluster first, then Jean-Zay, while keeping the existing PPTI backend untouched and the user-facing interface (New Batch form, job list, visualizations) identical across all backends.
 
-La commande `sinfo -o "%P %G" | grep gpu` révèle la configuration réelle des partitions. Il y a deux familles : les partitions préfixées `cpu-*` et celles préfixées `gpu-*`. Contrairement à ce que le nommage suggère, les deux familles ont des GPUs déclarés (a6000 ou v100, toujours par groupe de 2 par nœud). La convention est d'utiliser les partitions `gpu-*` pour les jobs GPU car c'est là que `$SLURM_GPUTMPDIR` (le scratch NVMe ultra-rapide) est disponible.
+The user retains responsibility for the initial git clone of each project on each cluster. ssherd takes over from there: it performs a `git pull` before each new batch submission, manages job arrays, monitors progress, and syncs results back.
 
-Les partitions `gpu-*` existantes sont les suivantes, chacune disponible avec A6000 ou V100 sauf la dernière :
+---
 
+## 2. Data model changes
+
+### 2.1 Machine types
+
+The current data model has two entity types: `Proxy` and `Machine`. This needs to be extended to reflect the real diversity of compute targets. The new taxonomy has four types: `proxy` (a gateway used for SSH jumping, unchanged), `ppti` (the existing bare-SSH machines), `isir` (the ISIR SLURM cluster), and `jeanzay` (the IDRIS SLURM cluster). The type is declared when adding a machine in the UI, and it determines which backend is used when dispatching jobs.
+
+The `machines.json` structure gains a `type` field on each machine entry, and a new top-level `clusters` array that holds cluster-level configuration (as opposed to individual node configuration):
+
+```json
+{
+  "proxies": [...],
+  "machines": [
+    {
+      "id": "abc123",
+      "type": "ppti",
+      "name": "ppti-14-408-01",
+      "hostname": "ppti-14-408-01.ufr-info-p6.jussieu.fr",
+      "user": "21400464",
+      "proxy_id": "xyz789",
+      "gpu_model": "RTX A4500",
+      "temporary_path": "/temporary",
+      "status": "available"
+    }
+  ],
+  "clusters": [
+    {
+      "id": "isir-cluster",
+      "type": "isir",
+      "name": "ISIR Cluster",
+      "hostname": "cluster.isir.upmc.fr",
+      "user": "chambaz",
+      "proxy_id": "isir-gateway-id",
+      "home_path": "/home/chambaz",
+      "jobs_path": "/home/chambaz/jobs",
+      "logs_path": "/home/chambaz/jobs/logs",
+      "partitions": {
+        "1h":   "gpu-1heure",
+        "1d":   "gpu-1jour",
+        "1w":   "gpu-1semaine",
+        "inf":  "gpu-infini"
+      },
+      "gpu_types": ["a6000", "v100"],
+      "status": "available"
+    },
+    {
+      "id": "jeanzay",
+      "type": "jeanzay",
+      "name": "Jean-Zay",
+      "hostname": "jean-zay.idris.fr",
+      "user": "chambaz",
+      "proxy_id": "jeanzay-gateway-id",
+      "home_path": "$HOME",
+      "work_path": "$WORK",
+      "scratch_path": "$SCRATCH",
+      "jobs_path": "$WORK/jobs",
+      "logs_path": "$WORK/jobs/logs",
+      "partitions": {
+        "dev":  "gpu_p13",
+        "1h":   "gpu_p13",
+        "20h":  "gpu_p13",
+        "100h": "gpu_p13"
+      },
+      "accounts": ["your_account@v100", "your_account@a100", "your_account@h100"],
+      "status": "available"
+    }
+  ]
+}
 ```
-gpu-1heure    gpu:a6000:2  /  gpu:v100:2
-gpu-1jour     gpu:a6000:2  /  gpu:v100:2
-gpu-1semaine  gpu:a6000:2  /  gpu:v100:2
-gpu-infini    gpu:v100:2   (V100 uniquement)
+
+The key insight behind separating `machines` from `clusters` is that a PPTI machine is a single node ssherd controls directly, while a SLURM cluster is a single SSH endpoint that gives access to hundreds of nodes via job submission. They are structurally different and deserve different representations.
+
+### 2.2 Project paths per cluster
+
+A project currently has a single `RemotePath` which was designed for the PPTI NFS. With multiple backends, each project needs to know where it lives on each cluster. This is stored as a map in `project.json`:
+
+```json
+{
+  "id": "a1b2c3d4",
+  "slug": "isir",
+  "name": "ISIR Internship",
+  "remote_path": "/users/nfs/Vrac/paulchambaz/isir",
+  "data_path": "paulchambaz/isir",
+  "cluster_paths": {
+    "isir-cluster": "/home/chambaz/isir",
+    "jeanzay":      "$WORK/isir"
+  },
+  "git_repo": "https://github.com/paulchambaz/isir",
+  "branch": "master",
+  "git_token": "ghp_xxxxxxxxxxxx"
+}
 ```
 
-La partition `gpu-infini` est un cas particulier : elle ne propose que des V100, ce qui signifie qu'un job demandant explicitement un A6000 ne peut pas y être soumis.
+When generating a SLURM script for a given cluster, `GenerateSlurmScript` looks up `project.ClusterPaths[cluster.ID]` to get the correct project root on that cluster. If the path is not configured, the UI shows an error asking the user to set it up before submitting.
 
-La partition marquée d'un `*` dans `sinfo` (`cpu-1heure*`) est la partition par défaut — si on omet `--partition`, c'est elle qui est utilisée. Il est donc impératif de spécifier explicitement la partition GPU dans le script généré.
+### 2.3 Job extensions for SLURM
 
-### 2.3 Spécification des GPUs
+The `job.json` gains a `backend` field (`"ppti"`, `"isir"`, or `"jeanzay"`) and a `slurm_job_id` field that holds the array job ID returned by `sbatch`. The `machine` field, previously a machine name, becomes optional and is empty for SLURM jobs since ssherd does not control node placement. A new `slurm_task_states` map holds the per-task state as ssherd understands it, derived from polling `sacct`:
 
-Pour demander un GPU spécifique, on utilise la directive `--gres` avec le nom SLURM du modèle :
-
-```bash
---gres=gpu:a6000:1   # un RTX A6000 48Go
---gres=gpu:v100:1    # un Tesla V100 32Go
---gres=gpu:1         # n'importe quel GPU disponible
+```json
+{
+  "id": "e5f6a7b8",
+  "backend": "isir",
+  "slurm_job_id": "943076",
+  "slurm_array_size": 30,
+  "slurm_task_states": {
+    "0": "done",
+    "1": "running",
+    "2": "pending",
+    "5": "failed"
+  },
+  "cluster_id": "isir-cluster",
+  "script_path": "/home/chambaz/jobs/job_20260518_155358.sh"
+}
 ```
-
-Ces noms (`a6000`, `v100`) sont les identifiants tels que déclarés dans la configuration SLURM du cluster ISIR — ils correspondent à ce que `sinfo` retourne dans la colonne GRES.
-
-### 2.4 Variable de scratch GPU
-
-Pour les partitions `gpu-*`, la variable d'environnement de scratch n'est **pas** `$SLURM_TMPDIR` (scratch CPU) mais `$SLURM_GPUTMPDIR`, qui pointe vers `/gpu-scratch` — un volume NVMe. C'est là que doivent aller tous les fichiers écrits intensivement pendant l'entraînement (checkpoints, outputs). Le script doit utiliser `$SLURM_GPUTMPDIR` exclusivement pour les partitions `gpu-*`.
-
-### 2.5 Stockage NFS
-
-`/home` est monté sur tous les nœuds de calcul via NFS. C'est là que vivent les fichiers personnels (quota 1 To). `/argile` est également monté sur tous les nœuds mais lent — à éviter pour l'I/O de calcul. Il est formellement déconseillé de lancer des calculs directement depuis ces espaces. Tout I/O intensif passe par `$SLURM_GPUTMPDIR`, avec un rsync vers `/home` en fin de job.
 
 ---
 
-## 3. Référence des commandes SLURM utiles
+## 3. The SLURM backend architecture
 
-Cette section sert de référence intégrée pour toute la chaîne de travail autour de la fonctionnalité.
+### 3.1 Interface definition
 
-### 3.1 Soumission et gestion de jobs
-
-`sbatch <script.sh>` soumet un script batch pour exécution différée. `srun` obtient une allocation et exécute une commande de façon interactive (utile pour déboguer). `salloc` obtient une allocation sans l'exécuter immédiatement.
-
-Les directives de soumission les plus pertinentes pour ce projet sont les suivantes. `--array=<indexes>` spécifie un job array (ex. `--array=0-29` ou `--array=0-29%10` pour limiter à 10 tâches simultanées). `--job-name=<name>` donne un nom au job, visible dans `squeue`. `--partition=<name>` choisit la partition. `--gres=<name[:type]:count>` demande des ressources génériques comme les GPUs. `--time=<HH:MM:SS>` fixe la limite de wall clock — SLURM tue le job au-delà. `--mem=<MB>` fixe la mémoire maximale par nœud. `--cpus-per-task=<count>` fixe le nombre de CPUs par tâche. `--output=<filename>` et `--error=<filename>` redirigent stdout et stderr vers des fichiers, avec les patterns `%A` (job array ID) et `%a` (indice de tâche) pour nommer les fichiers par tâche.
-
-Pour annuler des jobs, `scancel <jobid>` annule un job entier, `scancel <jobid>_[0-5]` annule les tâches 0 à 5 d'un array, et `scancel -u <user>` annule tous les jobs d'un utilisateur.
-
-### 3.2 Observation et monitoring
-
-`squeue -u <user>` affiche les jobs en cours et en attente pour un utilisateur. Le format est personnalisable : `squeue -u chambaz --format="%.10i %.9P %.30j %.8T %.10M %R"` donne l'ID, la partition, le nom, l'état, le temps écoulé, et la raison d'attente. Les états possibles sont `PD` (pending), `R` (running), `CG` (completing), `F` (failed), `CA` (cancelled), `TO` (timeout), `CD` (completed).
-
-`sinfo` affiche l'état des nœuds et des partitions. `sinfo -o "%P %G"` montre les partitions avec leurs ressources GRES. `sinfo --long` donne plus de détails. `sinfo --partition=gpu-1jour` filtre sur une partition précise.
-
-`sacct` est la commande post-mortem essentielle — elle interroge la base de données d'accounting SLURM pour voir l'état de jobs terminés. La commande la plus utile pour l'observabilité d'un array est :
-
-```bash
-sacct -j <array_job_id> --format=JobID,JobName,State,ExitCode,Elapsed,Start,End -X
-```
-
-Le flag `-X` supprime les étapes de job pour ne montrer que les jobs parents. `ExitCode` affiche le code de retour du process Python sous la forme `exitcode:signal`. Pour voir uniquement les tâches échouées : `sacct -j <id> --state=FAILED,TIMEOUT -X`.
-
-`scontrol show job <jobid>` donne l'état détaillé d'un job en cours, incluant les nœuds alloués, le temps restant, et les ressources consommées.
-
-### 3.3 Variables d'environnement disponibles dans le script
-
-SLURM injecte automatiquement des variables dans l'environnement du script en cours d'exécution. Les plus utiles pour ce projet sont `$SLURM_ARRAY_JOB_ID` (ID du job array), `$SLURM_ARRAY_TASK_ID` (indice de la tâche courante, de 0 à N-1), `$SLURM_JOB_ID` (ID du job individuel), `$SLURM_JOB_PARTITION` (partition effectivement allouée), `$SLURM_GPUTMPDIR` (chemin du scratch NVMe GPU), et `$SLURM_CPUS_PER_TASK` (nombre de CPUs alloués).
-
----
-
-## 4. Informations disponibles dans le formulaire
-
-Tout le contenu nécessaire à la génération du script est déjà présent dans le `FormState` existant, à l'exception d'un seul champ nouveau. Le `FormState` pertinent contient `NamePrefix` (nom du job SLURM), `BaseCommand` (commande Python de base), `Axes` (liste d'axes d'ablation, chacun avec un nom optionnel et une liste de valeurs qui sont des flags shell complets comme `--algo sac`), `SeedFlag` / `StartSeed` / `NumSeeds`, `RetrySuffix` (typiquement `--resume`), `LogArgument` / `LogPath`, `OutputArgument` / `OutputPath` (avec placeholders `{ablation}`, `{seed}`, `{nom_axe}`), et `OutputFiles` (fichiers à surveiller, ex. `meta.json`, `results.pkl`).
-
-Côté projet, on dispose de `RemotePath` (chemin NFS absolu du projet, ex. `/users/nfs/Vrac/paulchambaz/isir`) et `DataPath` (chemin relatif sous le scratch, ex. `paulchambaz/isir`).
-
-Le seul champ nouveau à ajouter au `FormState` est `MaxHours int` — la durée maximale estimée d'un job individuel en heures entières. Il pilote le choix de la partition et la directive `--time`.
-
----
-
-## 5. Logique de sélection de partition et de GPU
-
-### 5.1 Partition selon la durée
+The existing scheduler logic is tightly coupled to the SSH/PPTI model. The cleanest refactoring introduces a `Backend` interface in `internal/backend.go` that both the existing and new backends implement:
 
 ```go
-func slurmPartition(maxHours int) string {
+type Backend interface {
+    // Submit generates and submits a batch of jobs, returns an opaque job ID
+    Submit(project Project, form FormState, cluster Cluster) (string, error)
+
+    // Poll returns the current state of each task in the batch
+    Poll(job Job, cluster Cluster) (map[string]TaskState, error)
+
+    // SyncOutput copies results from the cluster to the local cache
+    SyncOutput(job Job, cluster Cluster, outputFiles []string) error
+
+    // Cancel stops all running and pending tasks
+    Cancel(job Job, cluster Cluster) error
+}
+```
+
+`PPTIBackend` implements this interface using the existing SSH/heartbeat/NFS logic. `SlurmBackend` implements it using `sbatch`, `sacct`, and rsync over SSH. Jean-Zay is a `SlurmBackend` with a different `Cluster` config — no new backend type needed, just a different configuration.
+
+### 3.2 Hardcoded constants for ISIR
+
+The following values are currently hardcoded in the generated script and should be promoted to named constants or cluster config fields in Go before this feature ships, so they can be changed without editing templates:
+
+```go
+const (
+    ISIRScratchVar      = "SLURM_GPUTMPDIR"    // GPU NVMe scratch on ISIR
+    ISIRDefaultCPUs     = 4
+    ISIRDefaultMemGB    = 32
+    SyncWatchInterval   = 600                   // seconds between background syncs
+    SlurmPollInterval   = 60                    // seconds between sacct polls
+    CheckpointPattern   = "*.ckpt"
+)
+
+// Partition selection from requested hours
+func slurmPartition(cluster Cluster, maxHours int) string {
     switch {
     case maxHours <= 1:
-        return "gpu-1heure"
+        return cluster.Partitions["1h"]
     case maxHours <= 24:
-        return "gpu-1jour"
+        return cluster.Partitions["1d"]
     case maxHours <= 168:
-        return "gpu-1semaine"
+        return cluster.Partitions["1w"]
     default:
-        // gpu-infini est V100 uniquement — à noter dans un commentaire du script
-        return "gpu-infini"
+        return cluster.Partitions["inf"]
     }
 }
 ```
 
-### 5.2 GPU selon le PreferredGPU du formulaire
-
-Le champ `PreferredGPU` du formulaire utilise actuellement les noms des GPUs PPTI ("RTX A4500", "RTX 3080"). Pour le cluster ISIR, il faut mapper vers les identifiants SLURM. Un champ séparé `SlurmGPU` dans les settings, ou une simple UI dans le script exporté avec deux options (a6000 / v100 / any), est plus propre qu'un mapping fragile. La valeur par défaut est `gpu:1` (n'importe quel GPU). Si la partition est `gpu-infini`, forcer `gpu:v100:1` car c'est la seule option disponible.
-
 ---
 
-## 6. Structure du script généré
+## 4. Submission flow
 
-### 6.1 Directives SLURM
+### 4.1 Git pull before submission
 
-```bash
-#!/bin/bash
-#SBATCH --job-name=<NamePrefix>
-#SBATCH --partition=<partition>
-#SBATCH --gres=gpu:<type>:1
-#SBATCH --time=<MaxHours>:00:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --output=<RemotePath>/logs/slurm_%A_%a.out
-#SBATCH --error=<RemotePath>/logs/slurm_%A_%a.err
-#SBATCH --array=0-<N-1>
-```
-
-### 6.2 Décomposition de l'indice en paramètres
-
-`$SLURM_ARRAY_TASK_ID` est un entier de 0 à N-1. Le mapping vers les combinaisons (axes × seeds) suit une décomposition en base mixte avec les seeds en poids faible — même ordre que ssherd pour la cohérence des indices. Pour deux axes de tailles `N0` et `N1` et `S` seeds :
-
-```bash
-SEEDS=(1 2 3)
-AXIS_0_VALUES=("--algo sac" "--algo afu")
-AXIS_1_VALUES=("--action-dim 5" "--action-dim 10" "--action-dim 15")
-
-N_SEEDS=${#SEEDS[@]}
-N_AXIS_1=${#AXIS_1_VALUES[@]}
-N_AXIS_0=${#AXIS_0_VALUES[@]}
-
-SEED_IDX=$(( SLURM_ARRAY_TASK_ID % N_SEEDS ))
-AXIS_1_IDX=$(( (SLURM_ARRAY_TASK_ID / N_SEEDS) % N_AXIS_1 ))
-AXIS_0_IDX=$(( (SLURM_ARRAY_TASK_ID / (N_SEEDS * N_AXIS_1)) % N_AXIS_0 ))
-
-SEED=${SEEDS[$SEED_IDX]}
-AXIS_0=${AXIS_0_VALUES[$AXIS_0_IDX]}
-AXIS_1=${AXIS_1_VALUES[$AXIS_1_IDX]}
-
-# Construction du slug d'ablation (même logique que ssherd)
-ABLATION=$(echo "${AXIS_0} ${AXIS_1}" | sed 's/ /_/g; s/-/_/g; s/__*/_/g')
-```
-
-### 6.3 Résolution des chemins
-
-L'`OutputPath` du formulaire contient des placeholders textuels (`{ablation}`, `{seed}`) que la fonction Go `resolveSlurmPlaceholders` convertit en références bash (`${ABLATION}`, `${SEED}`) avant d'écrire le template. Le chemin local scratch et le chemin NFS sont alors :
-
-```bash
-OUTPUT_LOCAL="$SLURM_GPUTMPDIR/<DataPath>/<OutputPath résolu>"
-OUTPUT_NFS="<RemotePath>/<OutputPath résolu>"
-```
-
-### 6.4 Synchronisation et robustesse
-
-Le script embarque deux fonctions de sync. `sync_watch` transfère uniquement les fichiers listés dans `OutputFiles` (les fichiers légers de suivi) via `rsync` avec des filtres `--include` / `--exclude`. `sync_full` y ajoute le pattern `*.ckpt` pour le checkpoint. Un `trap sync_full EXIT` garantit la synchronisation complète à toute terminaison — fin normale, timeout SLURM (SIGTERM), ou `scancel`. Un loop en arrière-plan appelle `sync_watch` toutes les 10 minutes pour rendre les résultats accessibles en cours de run.
-
-```bash
-sync_watch() {
-    rsync -a \
-        --include='meta.json' \
-        --include='results.pkl' \
-        --include='progress.json' \
-        --exclude='*' \
-        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/"
-}
-
-sync_full() {
-    rsync -a \
-        --include='meta.json' \
-        --include='results.pkl' \
-        --include='progress.json' \
-        --include='*.ckpt' \
-        --exclude='*' \
-        "$OUTPUT_LOCAL/" "$OUTPUT_NFS/"
-}
-
-trap sync_full EXIT
-
-background_sync() {
-    while true; do sleep 600; sync_watch; done
-}
-background_sync &
-SYNC_BG_PID=$!
-```
-
-### 6.5 Resume
-
-Si `RetrySuffix` est non-vide, le script vérifie la présence d'un checkpoint dans `$OUTPUT_NFS` et le copie dans le scratch avant de lancer Python :
-
-```bash
-RESUME_FLAG=""
-if [ -f "$OUTPUT_NFS/checkpoint.ckpt" ]; then
-    cp "$OUTPUT_NFS/checkpoint.ckpt" "$OUTPUT_LOCAL/checkpoint.ckpt"
-    RESUME_FLAG="<RetrySuffix>"
-fi
-```
-
-### 6.6 Commande finale et nettoyage
-
-```bash
-mkdir -p "$OUTPUT_LOCAL" "$OUTPUT_NFS/../../logs"
-
-cd <RemotePath>
-
-uv run <BaseCommand> \
-    $AXIS_0 $AXIS_1 \
-    <SeedFlag> $SEED \
-    <LogArgument> "$OUTPUT_LOCAL/<LogPath>" \
-    <OutputArgument> "$OUTPUT_LOCAL" \
-    $RESUME_FLAG
-
-kill $SYNC_BG_PID 2>/dev/null
-wait $SYNC_BG_PID 2>/dev/null
-# trap EXIT déclenche sync_full ici automatiquement
-```
-
----
-
-## 7. Implémentation Go
-
-### 7.1 Modification du FormState
-
-Ajouter `MaxHours int` dans la struct `FormState` (fichier `internal/job.go` ou `internal/args.go`). Ce champ est persisté dans `job.json` comme les autres même s'il ne sert qu'à la génération SLURM.
-
-### 7.2 Nouvelle route
-
-Dans `daemon/routes.go`, ajouter `POST /projects/{slug}/jobs/export-slurm`. Cette route ne crée pas de jobs dans ssherd — elle génère et retourne un fichier.
-
-### 7.3 Handler
-
-Le handler parse le formulaire exactement comme le handler de création de batch (réutiliser la fonction de parsing existante), appelle `GenerateSlurmScript`, et retourne la réponse avec les headers de téléchargement :
+When the user clicks "Start ISIR" (or "Start Jean-Zay"), ssherd opens an SSH connection to the cluster frontale and runs a `git pull` in the project's cluster path before generating the script. This ensures the code on the cluster is up to date with the remote repo:
 
 ```go
-func (s *Server) handleExportSlurm(w http.ResponseWriter, r *http.Request) {
-    slug := r.PathValue("slug")
-    project := s.store.GetProjectBySlug(slug)
-    form := parseJobForm(r) // même parsing que la création
-
-    script := internal.GenerateSlurmScript(project, form)
-
-    filename := fmt.Sprintf("slurm_%s.sh", internal.Slugify(form.NamePrefix))
-    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-    w.Header().Set("Content-Disposition",
-        fmt.Sprintf(`attachment; filename="%s"`, filename))
-    fmt.Fprint(w, script)
+func (b *SlurmBackend) gitPull(conn *ssh.Client, projectPath string) error {
+    cmd := fmt.Sprintf("cd %s && git pull origin %s", projectPath, project.Branch)
+    return conn.Run(cmd)
 }
 ```
 
-Comme c'est un POST standard (pas htmx) qui retourne un fichier, le navigateur déclenche le téléchargement nativement sans JavaScript supplémentaire.
+If `git pull` fails (conflict, detached HEAD, network issue), the submission is aborted and the error is shown in the UI. The user must resolve it manually — ssherd never force-pushes or resolves conflicts automatically.
 
-### 7.4 Fonction de génération
+### 4.2 Script generation and storage
 
-Dans `internal/slurm.go` :
+After the git pull, `GenerateSlurmScript` produces the bash script exactly as described in the export SLURM design doc. ssherd then copies the script to `cluster.JobsPath` on the cluster via SSH, naming it with a timestamp:
+
+```
+/home/chambaz/jobs/isir_<project_slug>_<timestamp>.sh
+```
+
+This mirrors exactly what the standalone `submit` tool does manually today. The script is stored permanently in `~/jobs/` so the user can inspect it, resubmit it manually, or pass it to `retry` at any time.
+
+### 4.3 sbatch invocation
+
+ssherd runs `sbatch` over SSH and captures the output to extract the job array ID:
 
 ```go
-type slurmData struct {
-    Project        Project
-    Form           FormState
-    Total          int       // taille du job array
-    Partition      string
-    GresSpec       string    // ex. "gpu:a6000:1"
-    Seeds          []int
-    AxisArrays     [][]string // valeurs de chaque axe
-    OutputPathBash string    // OutputPath avec placeholders → vars bash
-    MaxTimeStr     string    // ex. "08:00:00"
-}
-
-func GenerateSlurmScript(project Project, form FormState) string {
-    total := form.NumSeeds
-    for _, axis := range form.Axes {
-        total *= len(axis.Values)
-    }
-
-    partition := slurmPartition(form.MaxHours)
-    gres := slurmGres(partition, form.PreferredGPU)
-    outputPathBash := resolveSlurmPlaceholders(form.OutputPath, form.Axes)
-
-    seeds := make([]int, form.NumSeeds)
-    for i := range seeds {
-        seeds[i] = form.StartSeed + i
-    }
-
-    axisArrays := make([][]string, len(form.Axes))
-    for i, axis := range form.Axes {
-        axisArrays[i] = axis.Values
-    }
-
-    data := slurmData{
-        Project:        project,
-        Form:           form,
-        Total:          total,
-        Partition:      partition,
-        GresSpec:       gres,
-        Seeds:          seeds,
-        AxisArrays:     axisArrays,
-        OutputPathBash: outputPathBash,
-        MaxTimeStr:     fmt.Sprintf("%02d:00:00", form.MaxHours),
-    }
-
-    tmpl := template.Must(template.New("slurm").Parse(slurmTemplate))
-    var buf strings.Builder
-    tmpl.Execute(&buf, data)
-    return buf.String()
-}
-
-func slurmPartition(maxHours int) string {
-    switch {
-    case maxHours <= 1:
-        return "gpu-1heure"
-    case maxHours <= 24:
-        return "gpu-1jour"
-    case maxHours <= 168:
-        return "gpu-1semaine"
-    default:
-        return "gpu-infini" // V100 uniquement
-    }
-}
-
-func slurmGres(partition, preferredGPU string) string {
-    // gpu-infini ne propose que des V100
-    if partition == "gpu-infini" {
-        return "gpu:v100:1"
-    }
-    switch preferredGPU {
-    case "a6000", "RTX A6000":
-        return "gpu:a6000:1"
-    case "v100", "V100":
-        return "gpu:v100:1"
-    default:
-        return "gpu:1"
-    }
-}
-
-// resolveSlurmPlaceholders convertit {ablation} → ${ABLATION},
-// {seed} → ${SEED}, et {nom_axe} → ${NOM_AXE_VAL} pour usage dans le template bash.
-func resolveSlurmPlaceholders(outputPath string, axes []Axis) string {
-    result := outputPath
-    result = strings.ReplaceAll(result, "{ablation}", "${ABLATION}")
-    result = strings.ReplaceAll(result, "{seed}", "${SEED}")
-    for _, axis := range axes {
-        if axis.Name != "" {
-            varName := strings.ToUpper(strings.ReplaceAll(axis.Name, "-", "_"))
-            result = strings.ReplaceAll(result,
-                "{"+axis.Name+"}", "${"+varName+"_VAL}")
-        }
-    }
-    return result
-}
+output, err := conn.RunOutput(fmt.Sprintf("sbatch %s", scriptPath))
+// output is "Submitted batch job 943076"
+jobID := strings.TrimPrefix(strings.TrimSpace(output), "Submitted batch job ")
 ```
 
-### 7.5 Modification de l'UI
-
-Dans `views/jobs.templ`, ajouter dans la section Infrastructure du formulaire un champ `MaxHours`, et dans la barre de boutons le bouton d'export via `formaction` HTML standard :
-
-```html
-<!-- Champ MaxHours dans la section Infrastructure -->
-<div class="flex flex-col gap-1.5 px-4 py-3 w-full md:w-32">
-    <label class="text-xs font-semibold text-base-500 uppercase tracking-wide">
-        Max hours / job
-    </label>
-    <input type="number" name="max_hours" value="4" min="1"
-        class="bg-transparent text-sm font-mono focus:outline-none">
-</div>
-
-<!-- Bouton dans la barre d'actions -->
-<button type="submit"
-    formaction="/projects/{slug}/jobs/export-slurm"
-    formmethod="POST"
-    class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
-    To ISIR cluster
-</button>
-```
+The job ID is stored in `job.SlurmJobID` and persisted in `job.json`. From this point, all monitoring uses this ID.
 
 ---
 
-## 8. Ce que le script généré suppose
+## 5. Monitoring and observability
 
-Le script généré fait deux hypothèses qui doivent être satisfaites manuellement avant soumission. Premièrement, `uv` doit être disponible dans le `$PATH` sur les nœuds de calcul du cluster ISIR — à vérifier avec le service informatique ou via une session `srun` interactive. Deuxièmement, le projet doit être cloné et à jour dans `RemotePath` sur le NFS du cluster avant soumission. Ces deux prérequis sont documentés dans un commentaire en tête du script généré.
+### 5.1 Polling with sacct
+
+The PPTI backend uses a heartbeat file updated every 94 seconds. The SLURM backend replaces this with periodic `sacct` polling every `SlurmPollInterval` seconds. The poll runs over the persistent watcher SSH connection:
+
+```go
+func (b *SlurmBackend) Poll(job Job, cluster Cluster) (map[string]TaskState, error) {
+    cmd := fmt.Sprintf(
+        "sacct -j %s --format=JobID,State,ExitCode --noheader -X",
+        job.SlurmJobID,
+    )
+    output, err := b.watcherConn.RunOutput(cmd)
+    // parse each line: "943076_0   COMPLETED   0:0"
+    // map task index → TaskState
+}
+```
+
+`TaskState` is an enum: `Pending`, `Running`, `Done`, `Failed`, `Timeout`, `Cancelled`. ssherd maps SLURM states to these: `COMPLETED` → `Done`, `FAILED` → `Failed`, `TIMEOUT` → `Timeout`, `CANCELLED` → `Cancelled`, `RUNNING` → `Running`, `PENDING` → `Pending`.
+
+A task is considered definitively finished (for the purpose of triggering `SyncOutput`) when it transitions to any terminal state: `Done`, `Failed`, or `Timeout`.
+
+### 5.2 Progress reading via progress.json
+
+For each running task, ssherd reads `progress.json` from the NFS output path every `SlurmPollInterval` seconds via the watcher connection:
+
+```go
+progressPath := fmt.Sprintf("%s/%s/progress.json",
+    cluster.HomePath + "/" + project.ClusterPaths[cluster.ID] + "/results/...",
+    taskOutputPath,
+)
+content, err := b.watcherConn.ReadFile(progressPath)
+```
+
+The `progress.json` format is already defined by the `Ssherd` Python class: `current_step`, `total_steps`, `start_time`, `current_time`. ssherd uses this to compute completion percentage and estimated time remaining, exactly as it does today for PPTI jobs. The UI displays per-task progress bars in the job detail view.
+
+### 5.3 Determining when a task is done
+
+A SLURM task is marked `done` in ssherd when `sacct` reports `COMPLETED` for that task index. ssherd does not rely on any file written by the job itself to signal completion — `sacct` is the authoritative source of truth. This is cleaner than the PPTI model where a `status` file written by the job script was the signal.
+
+The flow is: `sacct` returns `COMPLETED` for task N → ssherd calls `SyncOutput` for that task → files are copied from `cluster.HomePath/.../results/...` to local cache → task is marked `done` in `job.json` → UI updates via WebSocket.
+
+---
+
+## 6. Output synchronization
+
+### 6.1 During execution
+
+The generated bash script handles in-job sync autonomously via `sync_watch` (every 10 minutes) and `sync_full` (on EXIT trap). This means `meta.json`, `results.pkl`, and `progress.json` appear on NFS without ssherd doing anything. ssherd reads them passively via the watcher connection.
+
+### 6.2 After task completion
+
+When a task reaches a terminal state, `SyncOutput` copies the output files from the cluster NFS to the local ssherd cache. It uses rsync over SSH with the same include/exclude patterns as the bash script, but from the local machine to the cluster rather than within the cluster:
+
+```go
+func (b *SlurmBackend) SyncOutput(job Job, cluster Cluster, outputFiles []string) error {
+    remoteDir := fmt.Sprintf("%s:%s",
+        cluster.User + "@" + cluster.Hostname,
+        remoteOutputPath,
+    )
+    // rsync with ProxyJump via cluster.ProxyID
+    // include only outputFiles patterns + *.ckpt if resume is possible
+}
+```
+
+Checkpoints are included in the sync only if `job.RetryCount < job.MaxRetries` — once a job has exhausted its retries, checkpoints are excluded to save bandwidth and local disk space.
+
+---
+
+## 7. UI changes
+
+### 7.1 Machine management
+
+The `/machines` page gains a type selector when adding a new machine: `ppti`, `isir`, or `jeanzay`. For PPTI machines, the form is unchanged. For `isir` and `jeanzay`, the form shows cluster-specific fields: `home_path`, `jobs_path`, `logs_path`, and the partitions map. The GPU model selector is replaced by a GPU type selector (`a6000`, `v100` for ISIR; `v100`, `a100`, `h100` for Jean-Zay).
+
+### 7.2 Project settings
+
+The project settings page gains a "Cluster paths" section where the user declares where the project is cloned on each configured cluster. This is a simple key-value map: cluster name → absolute path. ssherd does not clone the repo — the user does this once manually and registers the path here.
+
+### 7.3 New Batch form
+
+The form gains a "Target" selector at the top: `PPTI`, `ISIR Cluster`, `Jean-Zay`. Selecting a SLURM target replaces the GPU/VRAM/machine fields with cluster-specific fields: partition (derived from `MaxHours`), GPU type preference, and account (for Jean-Zay). The "Start batch" button label changes to match the selected target. The "To ISIR cluster" export button remains available as a standalone option for users who want to manage submission manually.
+
+### 7.4 Job list and detail
+
+The job list shows a `backend` badge per job (`PPTI`, `ISIR`, `JZ`). The job detail view shows per-task progress for SLURM jobs: a table with task index, SLURM state, progress percentage from `progress.json`, and elapsed time. The existing single-job progress bar is replaced by an aggregated view (mean completion across all tasks) with an expandable per-task breakdown.
+
+---
+
+## 8. Implementation order
+
+The work naturally splits into four sequential phases. The first phase is the data model refactoring: adding `type` to machines, introducing the `clusters` array, adding `cluster_paths` to projects, and updating the UI forms. This is purely structural and does not change any scheduling behavior.
+
+The second phase is the `Backend` interface extraction: wrapping the existing PPTI logic in a `PPTIBackend` struct that implements the interface, without changing its behavior. This is a refactoring phase — all existing tests should pass unchanged.
+
+The third phase is the `SlurmBackend` implementation for ISIR: `Submit` (git pull + script generation + sbatch), `Poll` (sacct), `SyncOutput` (rsync), and `Cancel` (scancel). The monitoring loop in `scheduler.go` calls the backend interface methods rather than the PPTI-specific functions.
+
+The fourth phase is Jean-Zay: registering it as a second `SlurmBackend` instance with a different `Cluster` config. At this point the only Jean-Zay-specific code is the partition/account configuration — everything else is inherited from the SLURM backend.
