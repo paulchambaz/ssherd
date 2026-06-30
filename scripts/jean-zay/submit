@@ -1,0 +1,89 @@
+#!/bin/bash
+set -e
+
+usage() {
+  cat <<EOF
+submit — review and submit a SLURM batch script
+
+USAGE
+    submit [--concurrent N] [script]
+
+DESCRIPTION
+    If a script is provided, copies it to ~/jobs/ with a timestamp and opens
+    it in vim for review before submitting. If no script is provided, opens
+    an empty vim buffer to paste a script into, then saves it to ~/jobs/.
+    After review, prompts for confirmation before calling sbatch.
+
+    --concurrent N    Max simultaneous array tasks (default: 3). Set to 0
+                      to disable the limit.
+
+EXAMPLES
+    submit slurm_ablation.sh
+    submit --concurrent 5 slurm_ablation.sh
+    submit --concurrent 0 slurm_ablation.sh
+    submit
+EOF
+exit 0
+}
+
+concurrent=3
+
+while [[ "$1" == -* ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -c|--concurrent) concurrent="$2"; shift 2 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+JOBS_DIR="$HOME/jobs"
+mkdir -p "$JOBS_DIR"
+timestamp=$(date +%Y%m%d_%H%M%S)
+
+if [ -z "$1" ]; then
+  dst="$JOBS_DIR/job_${timestamp}.sh"
+  vim -c "set filetype=bash" "$dst"
+  if [ ! -s "$dst" ]; then
+    echo "Empty file, aborted."
+    rm -f "$dst"
+    exit 0
+  fi
+else
+  src="$1"
+  if [ ! -f "$src" ]; then
+    echo "Error: file not found: $src"
+    exit 1
+  fi
+  name=$(basename "${src%.sh}")
+  dst="$JOBS_DIR/${name}_${timestamp}.sh"
+  cp "$src" "$dst"
+  vim -c "set filetype=bash" "$dst"
+fi
+
+array_spec=$(grep -oP '(?<=#SBATCH --array=)\S+' "$dst" || true)
+
+if [ -n "$array_spec" ] && [ "$concurrent" -gt 0 ] 2>/dev/null; then
+  # Strip any existing %N cap, then apply ours
+  array_spec=$(echo "$array_spec" | sed 's/%[0-9]*//')
+  sbatch_array_arg="--array=${array_spec}%${concurrent}"
+else
+  sbatch_array_arg=""
+fi
+
+echo ""
+echo "Script:      $dst"
+[ -n "$sbatch_array_arg" ] && echo "Array:       $sbatch_array_arg"
+read -r -p "Submit? [y/N] " confirm
+[[ "$confirm" != "y" ]] && echo "Aborted." && exit 0
+
+cd $HOME/isir
+job_output=$(sbatch ${sbatch_array_arg:+$sbatch_array_arg} "$dst")
+echo "$job_output"
+job_id=$(echo "$job_output" | awk '{print $NF}')
+
+echo ""
+echo "Submitted as job $job_id. Useful commands:"
+echo "  squeue -u $USER"
+echo "  sacct -j $job_id --format=JobID,State,ExitCode,Elapsed -X"
+echo "  tail -f $HOME/isir/logs/slurm_${job_id}_0.out"
+echo "  retry $job_id $dst"

@@ -1,0 +1,113 @@
+#!/bin/bash
+set -e
+
+usage() {
+  cat <<EOF
+retry — resubmit failed tasks from a SLURM job array
+
+USAGE
+    retry [--concurrent N] <job_id> [script]
+
+DESCRIPTION
+    Queries sacct for tasks in FAILED, TIMEOUT, or CANCELLED state from the
+    given job array. Displays them, then prompts for confirmation before
+    resubmitting only those task indices via --array=<indices>.
+    If no script is provided, lists the scripts available in ~/jobs/ and
+    prompts to pick one.
+
+    --concurrent N    Max simultaneous array tasks (default: 3). Set to 0
+                      to disable the limit.
+
+ARGUMENTS
+    job_id      The SLURM array job ID to inspect (required).
+    script      The sbatch script to resubmit (optional).
+
+EXAMPLES
+    retry 12345
+    retry 12345 ~/jobs/slurm_ablation_20260518_143201.sh
+    retry --concurrent 5 12345
+    retry --concurrent 0 12345 ~/jobs/slurm_ablation_20260518_143201.sh
+EOF
+exit 0
+}
+
+concurrent=3
+
+while [[ "$1" == -* ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -c|--concurrent) concurrent="$2"; shift 2 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+job_id="$1"
+if [ -z "$job_id" ]; then
+  echo "Error: job_id required."
+  echo "Usage: retry [--concurrent N] <job_id> [script]"
+  exit 1
+fi
+
+echo "Querying sacct for job $job_id..."
+failed_lines=$(sacct -j "$job_id" --format=JobID,State -X --noheader \
+  | grep -E "FAILED|TIMEOUT|CANCELLED" || true)
+
+if [ -z "$failed_lines" ]; then
+  echo "No failed, timed out, or cancelled tasks found for job $job_id."
+  sacct -j "$job_id" --format=JobID,State,ExitCode,Elapsed -X
+  exit 0
+fi
+
+echo ""
+echo "Failed tasks:"
+sacct -j "$job_id" --format=JobID,State,ExitCode,Elapsed -X \
+  | grep -E "JobID|FAILED|TIMEOUT|CANCELLED"
+
+
+failed_indices=$(echo "$failed_lines" \
+  | awk '{print $1}' \
+  | sed 's/^[0-9]*_//' \
+  | tr -d '[]' \
+  | tr '\n' ',' \
+  | sed 's/,$//')
+
+if [ "$concurrent" -gt 0 ] 2>/dev/null; then
+  array_spec="${failed_indices}%${concurrent}"
+else
+  array_spec="$failed_indices"
+fi
+
+echo ""
+echo "Indices to resubmit: $failed_indices"
+[ "$concurrent" -gt 0 ] 2>/dev/null && echo "Concurrency cap:     $concurrent"
+
+script="$2"
+if [ -z "$script" ]; then
+  echo ""
+  echo "Available scripts in ~/jobs/:"
+  ls -1t "$HOME/jobs/"
+  echo ""
+  read -r -p "Script name (in ~/jobs/): " script_name
+  script="$HOME/jobs/$script_name"
+fi
+
+if [ ! -f "$script" ]; then
+  echo "Error: script not found: $script"
+  exit 1
+fi
+
+echo ""
+read -r -p "Resubmit --array=$array_spec with $script? [y/N] " confirm
+[[ "$confirm" != "y" ]] && echo "Aborted." && exit 0
+
+cd $HOME/isir
+job_output=$(sbatch --array="$array_spec" "$script")
+echo "$job_output"
+new_job_id=$(echo "$job_output" | awk '{print $NF}')
+
+echo ""
+echo "Resubmitted as job $new_job_id. Useful commands:"
+echo "  squeue -u $USER"
+echo "  sacct -j $new_job_id --format=JobID,State,ExitCode,Elapsed -X"
+echo "  tail -f $HOME/isir/logs/slurm_${new_job_id}_0.out"
+echo "  retry $new_job_id $script"

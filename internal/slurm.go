@@ -413,7 +413,6 @@ var slurmJeanZayTemplate = `#!/bin/bash -l
 #SBATCH --qos=[[.QoS]]
 #SBATCH --time=[[.MaxTimeStr]]
 #SBATCH --cpus-per-task=10
-#SBATCH --mem=40G
 #SBATCH --output=[[.JeanZayPath]]/logs/slurm_%A_%a.out
 #SBATCH --error=[[.JeanZayPath]]/logs/slurm_%A_%a.err
 #SBATCH --array=0-[[.ArrayEnd]]

@@ -1,0 +1,15 @@
+#!/bin/bash
+cd $HOME
+selected="$1"
+if [ -z "$selected" ]; then
+    echo "Usage: $0 <directory>"
+    ls
+    exit 1
+fi
+cd "$selected" || exit 1
+TERM=xterm-256color has_session=$(tmux has-session -t "$selected" 2>&1)
+if [ -z "$has_session" ]; then
+    TERM=xterm-256color tmux attach-session -t "$selected"
+else
+    TERM=xterm-256color tmux new-session -s "$selected" bash
+fi
