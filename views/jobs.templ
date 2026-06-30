@@ -236,6 +236,12 @@ templ newBatchForm(p *internal.Project, gpuModels []string, formStateJSON string
 				class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
 				To ISIR cluster
 			</button>
+			<button type="button"
+				data-export-url={ "/projects/" + p.Slug + "/jobs/export-slurm-jean-zay" }
+				onclick="exportToIsir(this)"
+				class="px-4 py-2 text-sm font-medium border border-base-400 rounded-md hover:bg-base-200">
+				To Jean-Zay
+			</button>
 			<button type="submit" class="px-4 py-2 text-sm font-medium bg-accent-500 text-white hover:bg-accent-600 rounded-md border border-accent-700">
 				Create batch
 			</button>

@@ -375,6 +375,51 @@ func (s *Server) postExportSlurm(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, script)
 }
 
+func (s *Server) postExportSlurmJeanZay(w http.ResponseWriter, r *http.Request) {
+	p, err := s.findProjectBySlug(r.PathValue("slug"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form", http.StatusBadRequest)
+		return
+	}
+
+	form, axes, err := parseBatchForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	slurmAxes := make([]internal.SlurmAxis, len(axes))
+	for i, ax := range axes {
+		slurmAxes[i] = internal.SlurmAxis{Name: ax.Name, Values: ax.Values}
+	}
+
+	input := internal.SlurmInput{
+		NamePrefix:     form.NamePrefix,
+		BaseCommand:    form.BaseCommand,
+		SeedFlag:       form.SeedFlag,
+		StartSeed:      form.StartSeed,
+		NumSeeds:       form.NumSeeds,
+		MaxHours:       form.MaxHours,
+		RetrySuffix:    form.RetrySuffix,
+		LogArgument:    form.LogArgument,
+		LogPath:        form.LogPath,
+		OutputArgument: form.OutputArgument,
+		OutputPath:     form.OutputPath,
+		OutputFiles:    form.OutputFiles,
+		Axes:           slurmAxes,
+	}
+
+	script := internal.GenerateJeanZaySlurmScript(*p, input)
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, script)
+}
+
 func (s *Server) getJobDetail(w http.ResponseWriter, r *http.Request) {
 	p, err := s.findProjectBySlug(r.PathValue("slug"))
 	if err != nil {

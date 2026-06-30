@@ -24,6 +24,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /projects/{slug}/jobs/new", s.getNewBatch)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs", s.postBatch)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs/export-slurm", s.postExportSlurm)
+	s.mux.HandleFunc("POST /projects/{slug}/jobs/export-slurm-jean-zay", s.postExportSlurmJeanZay)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs/cancel-all", s.postCancelAllJobs)
 	s.mux.HandleFunc("POST /projects/{slug}/jobs/delete-finished", s.postDeleteFinishedJobs)
 	s.mux.HandleFunc("GET /projects/{slug}/jobs/{id}", s.getJobDetail)
